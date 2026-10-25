@@ -1,0 +1,7 @@
+.DS_Store
+# Built by make-site.sh
+site/
+.wrangler/
+node_modules/
+# Source video is large (27 MB) - keep it out of git
+*.mp4

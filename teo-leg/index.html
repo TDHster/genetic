@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Нога Янсена</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Нога Янсена</h1>
+    <p>Генетический алгоритм проектирует шагающую ногу, которую крутит кривошип (оранжевый). Стопа описывает замкнутую кривую:
+      внизу она стоит на земле и толкает зверя вперёд, сверху переносится назад. Главный критерий — <b>скорость ходьбы</b>
+      зверя на 6 таких ногах, без шарканья и с устойчивой опорой. Эталон — нога Тео Янсена (Strandbeest).
+      В <b>свободном режиме</b> эволюция с нуля выбирает всё: сколько шарниров, что к чему крепится, длины, где стопа.
+      В <b>режиме Янсена</b> схема его, а подбираются только длины — как делал он сам.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="Один турнир: 3 случайных ноги, худшая умирает, две оставшиеся дают потомка">1 спаривание</button>
+      <button id="btn-gen" title="Столько спариваний, сколько ног в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул ног
+        <select id="cfg-pop">
+          <option>200</option><option selected>500</option><option>1000</option><option>2000</option>
+        </select>
+      </label>
+      <label>Режим
+        <select id="cfg-mode">
+          <option value="free" selected>свободный: эволюционирует всё</option>
+          <option value="jansen">схема Янсена: только длины</option>
+        </select>
+      </label>
+      <label title="Защита новинок (как в NEAT): ноги делятся на виды по числу шарниров, у каждого вида свои места в пуле"><input id="cfg-species" type="checkbox" checked> виды</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings" title="Дополнительные правила оценки. Сила 0–100%: насколько сильно правило влияет на оценку. Применяются по «Сброс».">
+      <span class="label">Доп. правила:</span>
+      <label><input id="fit-height-on" type="checkbox" checked> высокие шарниры
+        <input id="fit-height" type="range" min="0" max="100" value="5"> <output for="fit-height">5%</output></label>
+      <label><input id="fit-angle-on" type="checkbox" checked> углы в шарнирах
+        <input id="fit-angle" type="range" min="0" max="100" value="5"> <output for="fit-angle">5%</output></label>
+      <label><input id="fit-compact-on" type="checkbox" checked> компактность
+        <input id="fit-compact" type="range" min="0" max="100" value="5"> <output for="fit-compact">5%</output></label>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-jansen-on" type="checkbox" checked> лучше Янсена на
+        <input id="stop-jansen" type="number" min="0" step="any" value="0"> %</label>
+      <label><input id="stop-stag-on" type="checkbox"> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="300"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="5000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучшая нога в пуле</option>
+            <option value="jansen">Нога Янсена (эталон)</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последняя погибшая</option>
+            <option value="species" disabled>Лучшая нога выбранного вида</option>
+            <option value="imported" disabled>Загруженная из файла</option>
+          </select>
+        </h2>
+        <label class="inline-check"><input id="show-jansen" type="checkbox" checked> путь стопы Янсена</label>
+        <label class="inline">Скорость
+          <select id="crank-speed">
+            <option value="0.1">0.1 об/с</option><option value="0.25" selected>0.25 об/с</option>
+            <option value="0.5">0.5 об/с</option><option value="1">1 об/с</option>
+          </select>
+        </label>
+      </div>
+      <canvas id="leg-canvas" width="640" height="500"></canvas>
+      <div class="legend">
+        <span style="--c:#ff9a1f">кривошип и неподвижные оси</span>
+        <span style="--c:#ffe14a">стержни</span>
+        <span style="--c:#5b8def">путь стопы</span>
+        <span style="--c:#3fbf5f">стопа на земле</span>
+        <span style="--c:rgba(240,192,64,0.7)">путь стопы Янсена</span>
+      </div>
+      <div id="leg-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить эту ногу (JSON)</button>
+        <label class="file-button">Загрузить ногу<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Зверь целиком</h2>
+      <canvas id="walker-canvas" width="560" height="320"></canvas>
+      <p class="note" id="walker-note">Лучшая нога пула ×6: два коленвала, передний и задний, по три ноги.
+        Фазы ног спереди 0°/120°/240°, сзади 60°/180°/300° — опора чередуется между передом и задом.
+        Земля едет навстречу со скоростью ходьбы; стопы на земле — зелёные.</p>
+
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — нога Янсена.</p>
+
+      <h2>Виды</h2>
+      <p class="note">Вид — сколько у ноги подвижных звеньев (твёрдых тел): у четырёхзвенника 3, у ноги Янсена 7.
+        Цепочка жёстких треугольников — одно звено. Квота — сколько мест в пуле положено виду.
+        Нажми на строку, чтобы посмотреть лучшую ногу вида.</p>
+      <div id="species-info" class="info"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 спаривание», чтобы увидеть один шаг эволюции подробно.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Схема и длины (геном)</h2>
+      <label class="inline">Масштаб для макета: 1 см модели =
+        <input id="build-scale" type="number" min="0.01" step="any" value="1" style="width: 70px"> см картона</label>
+      <div id="bars-info" class="info"></div>
+    </section>
+  </main>
+
+  <section class="panel score-panel">
+    <h2>Из чего складывается оценка</h2>
+    <div id="score-info" class="info"></div>
+  </section>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Нога</b> (<code>js/linkage.js</code>): геном — точки рамы, список шарниров и номер шарнира-стопы.
+        Каждый шарнир висит на двух стержнях, прикреплённых к двум <i>более ранним</i> точкам. Его положение —
+        пересечение двух окружностей. Если окружности не пересекаются, стержни не дотягиваются и нога разваливается.
+        Шарниры, от которых стопа не зависит, нейтральны.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): прокручиваем кривошип на полный оборот и смотрим на путь стопы.
+        Скорость = шаг / доля оборота на земле (см за оборот). Множители: на земле всегда ≥ 2 ноги из 6, ровность,
+        просвет над шагом без шарканья (10 см), подъём (до трети высоты ноги), материал. Стопа выше корпуса — нарушение.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в часах: трое, худший умирает, потомок с мутацией.
+        Мутации: длина стержня, сдвиг точки рамы, переворот шарнира, перецепка, новый шарнир, удаление шарнира, смена стопы.</li>
+      <li><b>Картинки</b> (<code>js/draw.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/linkage.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

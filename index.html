@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Генетические механизмы</title>
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --panel: #111729;
+      --border: #232c47;
+      --text: #dfe5f5;
+      --muted: #8d97b5;
+      --accent: #ffb547;
+      --blue: #5b8def;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, sans-serif;
+    }
+    main { max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    .lead { margin: 0 0 28px; color: var(--muted); max-width: 720px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; }
+    .card {
+      display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px; color: inherit; text-decoration: none;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .card svg { width: 100%; height: 150px; background: #05070f; border-radius: 8px; margin-bottom: 14px; }
+    .card h2 { margin: 0 0 6px; font-size: 19px; }
+    .card p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+    .card .go { margin-top: auto; color: var(--accent); font-weight: 600; }
+    .common { margin-top: 28px; color: var(--muted); font-size: 14px; max-width: 720px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Генетические алгоритмы проектируют механизмы</h1>
+    <p class="lead">Учебные эксперименты: эволюция — случайные мутации, скрещивание и отбор — сама собирает
+      работающий механизм из случайной кучи деталей. Всё считается прямо в браузере.</p>
+
+    <div class="cards">
+      <a class="card" href="watch/index.html">
+        <svg viewBox="0 0 380 150" aria-hidden="true">
+          <circle cx="150" cy="70" r="38" fill="#0b1a4a" stroke="#d8e0ff" stroke-width="1.5"/>
+          <circle cx="218" cy="56" r="26" fill="#0b1a4a" stroke="#d8e0ff" stroke-width="1.5"/>
+          <circle cx="218" cy="56" r="12" fill="#0b1a4a" stroke="#d8e0ff" stroke-width="1.5"/>
+          <line x1="218" y1="56" x2="236" y2="22" stroke="#ffe14a" stroke-width="3" stroke-linecap="round"/>
+          <line x1="150" y1="70" x2="128" y2="40" stroke="#ffe14a" stroke-width="3" stroke-linecap="round"/>
+          <path d="M132 34 L140 22 L160 22 L168 34" fill="none" stroke="#ff9a1f" stroke-width="4" stroke-linejoin="round"/>
+          <line x1="150" y1="22" x2="165" y2="128" stroke="#ffe14a" stroke-width="3"/>
+          <circle cx="165" cy="128" r="10" fill="#0a3aa8" stroke="#d8e0ff"/>
+          <text x="244" y="20" fill="#ff4d4d" font-size="12" font-family="system-ui">3600.000</text>
+          <text x="74" y="44" fill="#ff4d4d" font-size="12" font-family="system-ui">60.000</text>
+        </svg>
+        <h2>Слепой часовщик</h2>
+        <p>Из 30 шестерён, 7 стрелок, храповика и пружины эволюция собирает часы. Сначала появляется маятник,
+          потом спуск, потом стрелки — и к ~400-му поколению часы с точностью до миллионных долей процента.
+          По мотивам видео «Evolution IS a Blind Watchmaker».</p>
+        <span class="go">Открыть →</span>
+      </a>
+
+      <a class="card" href="teo-leg/index.html">
+        <svg viewBox="0 0 380 150" aria-hidden="true">
+          <line x1="20" y1="132" x2="360" y2="132" stroke="#6b7390" stroke-dasharray="4 4"/>
+          <path d="M120 131 C150 132 200 132 236 130 C250 118 236 92 200 88 C160 86 130 110 120 131 Z" fill="none" stroke="#5b8def" stroke-width="1.5"/>
+          <line x1="128" y1="131" x2="232" y2="131" stroke="#3fbf5f" stroke-width="4"/>
+          <polygon points="160,30 196,52 172,62" fill="rgba(255,225,74,0.15)" stroke="#ffe14a" stroke-width="2.5" stroke-linejoin="round"/>
+          <polygon points="140,82 176,90 158,131" fill="rgba(255,225,74,0.15)" stroke="#ffe14a" stroke-width="2.5" stroke-linejoin="round"/>
+          <line x1="236" y1="70" x2="196" y2="52" stroke="#ffe14a" stroke-width="2.5"/>
+          <line x1="236" y1="70" x2="176" y2="90" stroke="#ffe14a" stroke-width="2.5"/>
+          <line x1="172" y1="62" x2="176" y2="90" stroke="#ffe14a" stroke-width="2.5"/>
+          <line x1="160" y1="30" x2="140" y2="82" stroke="#ffe14a" stroke-width="2.5"/>
+          <line x1="250" y1="76" x2="236" y2="70" stroke="#ff9a1f" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="250" cy="76" r="5" fill="#ff9a1f"/>
+          <circle cx="172" cy="62" r="5" fill="#ff9a1f"/>
+          <circle cx="158" cy="131" r="4" fill="#ffffff"/>
+        </svg>
+        <h2>Нога Янсена</h2>
+        <p>Эволюция проектирует шагающую ногу на кривошипе — с нуля или по схеме Тео Янсена (Strandbeest).
+          Главный критерий — скорость ходьбы без шарканья. Виды защищают сложные механизмы, а «зверь целиком»
+          показывает лучшую ногу на двух коленвалах.</p>
+        <span class="go">Открыть →</span>
+      </a>
+
+      <a class="card" href="builder/index.html">
+        <svg viewBox="0 0 380 150" aria-hidden="true">
+          <line x1="20" y1="136" x2="360" y2="136" stroke="#6b7390"/>
+          <g fill="#c8a073" stroke="#05070f" stroke-width="1.5">
+            <rect x="130" y="120" width="40" height="16"/><rect x="171" y="121" width="40" height="15"/><rect x="212" y="120" width="40" height="16"/>
+            <rect x="150" y="104" width="40" height="16" transform="rotate(-2 170 112)"/><rect x="192" y="104" width="40" height="16"/>
+            <rect x="170" y="88" width="40" height="16" transform="rotate(3 190 96)"/>
+            <rect x="182" y="40" width="16" height="48" transform="rotate(-1 190 64)"/>
+          </g>
+          <line x1="150" y1="34" x2="230" y2="34" stroke="#ffb547" stroke-width="2.5"/>
+          <text x="236" y="38" fill="#ffb547" font-size="12" font-family="system-ui">высота</text>
+        </svg>
+        <h2>Каменщик</h2>
+        <p>Эволюция складывает самую высокую постройку из неровных камней — без раствора, только трение и тяжесть.
+          Камни кладутся на леса, потом леса убирают; по желанию — испытание наклоном гравитации в 8 сторон.
+          Изобретёт ли эволюция конус и арки?
+          Лучшая постройка строится и испытывается в 3D (three.js + физика Rapier).</p>
+        <span class="go">Открыть →</span>
+      </a>
+
+      <a class="card" href="coast/index.html">
+        <svg viewBox="0 0 380 150" aria-hidden="true">
+          <path d="M20 70 Q60 52 100 70 T180 70 T260 70 T340 70 L360 70 L360 150 L20 150 Z" fill="#1d4f9e" opacity="0.85"/>
+          <path d="M20 70 Q60 52 100 70 T180 70 T260 70 T340 70" fill="none" stroke="#d6e6ff" stroke-width="2"/>
+          <path d="M20 150 L150 118 L300 96 L300 150 Z" fill="#4a3f2c"/>
+          <path d="M150 118 L178 84 L196 84 L226 108 Z" fill="#857a66" stroke="#05070f" stroke-width="1.2"/>
+          <rect x="300" y="40" width="10" height="110" fill="#d9dce4"/>
+          <rect x="310" y="56" width="50" height="94" fill="#6d7486"/>
+          <path d="M296 44 q6 -16 18 -22 M300 40 q10 -10 22 -10" fill="none" stroke="#eef6ff" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <h2>Защита набережной</h2>
+        <p>Эволюция строит волноломы, рифы и наброску перед набережной. Каждый проект проходит столетний шторм
+          в симуляции волн: перехлёст через стенку — по формулам EurOtop, слабые блоки смывает прямо во время шторма.
+          Шторм в 3D (three.js), на плане и в разрезе.</p>
+        <span class="go">Открыть →</span>
+      </a>
+    </div>
+
+    <p class="common">Общее у всех проектов: один и тот же простой алгоритм — из трёх случайных особей худшая умирает,
+      две лучшие дают потомка с одной мутацией. Различаются только «модель мира» (что получается из генома)
+      и оценка (что считается хорошим). И везде эволюция находила лазейки в оценке — об этом в README проектов.</p>
+  </main>
+</body>
+</html>

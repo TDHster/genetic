@@ -1,0 +1,7 @@
+// Cloudflare Worker "genetic" (genetic.tdhster.workers.dev): static files only, no server code.
+// Build site/ first (./make-site.sh), then `npx wrangler deploy`. On push to git, Workers Builds does both.
+{
+  "name": "genetic",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./site" }
+}

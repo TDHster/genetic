@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Каменщик</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Каменщик</h1>
+    <p>Генетический алгоритм строит <b>самую высокую постройку</b> из неровных камней размером с кирпич
+      (размеры ±10 %, углы сдвинуты на ±4 мм). Ни раствора, ни правил кладки — только трение и тяжесть.
+      Когда леса убраны, постройка должна устоять и выдержать <b>испытание наклоном</b>: гравитация
+      наклоняется на 5° по очереди в восемь сторон. Колонна шириной b и высотой H опрокидывается при
+      tg 5° > b / H, то есть колонна из камней на торце держится не выше ~1,1–1,7 м — выше можно подняться
+      только на широком основании. Оценивается высота. Вопрос эксперимента: изобретёт ли эволюция сама конусную башню и арки?</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-gen" title="Столько спариваний, сколько построек в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул и камни будут точно такими же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новые камни и новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул
+        <select id="cfg-pool"><option>100</option><option>200</option><option selected>500</option><option>1000</option></select>
+      </label>
+      <label>Камней
+        <select id="cfg-stones"><option>30</option><option selected>100</option><option>300</option><option>1000</option><option>2000</option></select>
+      </label>
+      <label title="С лесами каждый камень держится на месте, пока не поставлены все, потом леса убирают — так строят настоящие арки. Без лесов каждый камень сразу под действием тяжести.">
+        <input id="cfg-scaffold" type="checkbox" checked> строить с лесами</label>
+      <label title="Испытание: гравитация наклоняется и по очереди держится в 8 направлениях. Как боковая нагрузка sin(угла) × вес. Без испытания постройка должна только устоять после снятия лесов — считается вдвое быстрее, но выигрывает тонкая колонна из камней на торце.">
+        <input id="cfg-tilt-on" type="checkbox" checked> испытание наклоном
+        <input id="cfg-tilt" type="range" min="0.5" max="10" step="0.5" value="5"> <output id="cfg-tilt-out">5°</output></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="300"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox"> предел
+        <input id="stop-max" type="number" min="1" value="2000"> поколений</label>
+    </div>
+    <div class="stats" id="stats">Загрузка физики…</div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2 id="view-title">Лучшая постройка</h2>
+        <div class="buttons">
+          <button id="btn-replay" title="Построить и испытать заново">↻ Повтор</button>
+          <label class="inline">Скорость
+            <select id="view-speed">
+              <option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option><option value="16">16×</option>
+            </select>
+          </label>
+          <label class="inline-check" title="Когда показ закончился, а в пуле появилась постройка выше — показать её">
+            <input id="view-follow" type="checkbox" checked> следить за лучшей</label>
+        </div>
+      </div>
+      <div class="view-wrap">
+        <canvas id="view-canvas"></canvas>
+        <div id="view-label" class="view-label"></div>
+      </div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Сетка — 50 см.
+        Оранжевое кольцо — итоговая высота. Коричневые стойки — леса.</p>
+      <div class="best-grid">
+        <div id="best-info" class="info"></div>
+        <div>
+          <canvas id="profile-canvas" class="profile"></canvas>
+          <div class="note center">силуэт постройки</div>
+        </div>
+      </div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить постройку (JSON)</button>
+        <label class="file-button">Загрузить постройку<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Высота по поколениям</h2>
+      <canvas id="chart-canvas" class="chart"></canvas>
+      <div class="legend">
+        <span style="--c:#ffb547">лучшая в пуле</span>
+        <span style="--c:#5b8def">медиана пула</span>
+      </div>
+
+      <h2>Что искать</h2>
+      <ul class="explain-list">
+        <li><b>Конус</b>: силуэт сужается кверху. Широкое основание держит наклон: у тонкой колонны
+          высотой H и шириной b опрокидывание начинается уже при угле atan(b / H).</li>
+        <li><b>Висячие камни</b>: под центром камня пусто больше чем на 5 см — он перекрывает пролёт
+          (перемычка, ложный свод или клин арки). Арку как таковую оценка не поощряет: только высоту.</li>
+        <li><b>Леса</b>: без них камень, который держится только с соседом, падает раньше, чем его поставят.
+          Настоящую арку так не построить, только ложный свод (каждый ряд нависает над предыдущим).</li>
+      </ul>
+
+      <h2>Как это устроено</h2>
+      <ol class="explain-list">
+        <li><b>Камни</b> (<code>js/stones.js</code>): один набор на весь прогон, создаётся из seed.</li>
+        <li><b>Геном</b> (<code>js/genome.js</code>): план каменщика — список укладок по порядку: какой камень,
+          где (x, z), какой гранью вниз, поворот и наклон. Камень опускается сверху до касания.</li>
+        <li><b>Физика</b> (<code>js/physics.js</code>, движок Rapier): стройка, затем испытание — оседание,
+          плавный наклон гравитации, который по очереди держится в 8 направлениях, пока камни не остановятся
+          (0,25–3 с), затем покой. Нагрузка «до покоя», а не на фиксированное время: иначе выживала бы башня,
+          которая уже падает, но медленно.</li>
+        <li><b>Оценка</b> (<code>js/fitness.js</code>): высота самой высокой точки после испытания. Упавшие камни лежат
+          низко и сами себя штрафуют.</li>
+        <li><b>Эволюция</b> (<code>js/evolution.js</code>): как в часах и ноге: трое случайных, худший умирает,
+          потомок двух лучших с одной мутацией занимает его место. Постройки считаются параллельно в воркерах.</li>
+      </ol>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

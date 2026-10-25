@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Защита набережной</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./lib/three.module.js", "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Защита набережной от шторма</h1>
+    <p>Генетический алгоритм проектирует сооружения перед набережной: волноломы, рифы, буны, наброску.
+      Каждый проект проходит один и тот же <b>столетний шторм</b> (волны 4,5 м, нагон +1,5 м) в симуляции волн.
+      Цель — чтобы волна <b>не перехлёстывала стенку</b> набережной (не больше 1 л/с на метр — безопасно для людей),
+      сооружение <b>выдержало шторм</b> (быстрая вода смывает блоки прямо во время шторма) и стоило как можно меньше.
+      Эталон — классический волнолом из крупного камня во всю бухту.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="8 потомков: родители из турниров, каждый потомок проходит шторм, за каждого погибает худший из трёх">1 пачка (8 потомков)</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул проектов
+        <select id="cfg-pop">
+          <option>40</option><option selected>60</option><option>100</option><option>200</option>
+        </select>
+      </label>
+      <label title="Защита новинок (как в NEAT): проекты делятся на виды по числу сегментов, у каждого вида свои места в пуле"><input id="cfg-species" type="checkbox" checked> виды</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-ref-on" type="checkbox"> лучше эталона на
+        <input id="stop-ref" type="number" min="0" step="any" value="10"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="40"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="300"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="views">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший проект в пуле</option>
+            <option value="reference">Эталон: волнолом во всю бухту</option>
+            <option value="bare">Берег без защиты</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="species" disabled>Лучший проект выбранного вида</option>
+            <option value="imported" disabled>Загруженный из файла</option>
+          </select>
+        </h2>
+        <label class="inline">Скорость
+          <select id="play-speed">
+            <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
+          </select>
+        </label>
+        <label class="inline">Высоты ×
+          <select id="vertical">
+            <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>
+          </select>
+        </label>
+        <button id="btn-replay" title="Шторм с начала: блоки снова целые">↺ Шторм заново</button>
+      </div>
+      <div id="view3d"></div>
+      <div class="timeline" id="timeline"><div class="ramp"></div><div class="done"></div></div>
+      <div class="live" id="live"></div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Высоты увеличены, чтобы были видны волны.
+        Это та же симуляция, что и в оценке (сетка 4 м), поэтому в конце шторма цифры совпадают с оценкой.</p>
+    </section>
+    <section class="panel">
+      <h2>План сверху</h2>
+      <canvas id="plan-canvas" width="600" height="300"></canvas>
+      <div class="legend" id="plan-legend"></div>
+      <p class="note">Клик по плану — линия разреза. Полоса за стенкой — перехлёст в этом месте: зелёная безопасно, красная опасно.</p>
+      <h2>Разрез поперёк берега</h2>
+      <canvas id="section-canvas" width="600" height="230"></canvas>
+      <p class="note">Слева море, справа набережная. Красный контур — смытые блоки. Пунктир — уровень воды при нагоне.</p>
+    </section>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Из чего складывается оценка</h2>
+      <div id="score-info" class="info"></div>
+      <h2>Сооружения (геном)</h2>
+      <div id="genome-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить этот проект (JSON)</button>
+        <label class="file-button">Загрузить проект<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — эталон.</p>
+
+      <h2>Виды</h2>
+      <p class="note">Вид — сколько сегментов проекта что-то строят (сегмент под дном или под более высоким соседом не считается).
+        Квота — сколько мест в пуле положено виду. Нажми на строку, чтобы посмотреть лучший проект вида.</p>
+      <div id="species-info" class="info"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.</div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Волны</b> (<code>js/sim.js</code>): нелинейные уравнения мелкой воды на сетке 4 м. Волны приходят с моря,
+        огибают и отражаются от сооружений, обрушаются на мелководье. По бокам бухты скалы, за стенкой набережная.
+        Сетка слишком грубая, чтобы увидеть брызги у стенки, поэтому <b>перехлёст</b> считается как у инженеров:
+        высота волны у подножия стенки берётся из симуляции, объём перехлёста — по формулам EurOtop (2018).</li>
+      <li><b>Сооружения</b> (<code>js/design.js</code>): геном — список сегментов (где, под каким углом, длина, ширина,
+        высота гребня, из чего). Мелкий, средний, крупный камень или бетонные тетраподы: чем крупнее, тем прочнее и дороже.
+        <b>Прочность</b>: если вода обтекает блок быстрее критической скорости (формула Избаша), верхний слой смывает.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): 1 + 100 × защита × экономия × целость.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в часах и в ноге Янсена: трое, худший умирает,
+        потомок с мутацией, виды с квотами. Потомки считаются пачками по 8 в фоновых потоках (Web Workers).</li>
+      <li><b>Картинки</b> (<code>js/draw2d.js</code>, <code>js/view3d.js</code> на three.js) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/design.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw2d.js"></script>
+  <script src="js/app.js"></script>
+  <script type="module" src="js/view3d.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Слепой часовщик</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Слепой часовщик</h1>
+    <p>Генетический алгоритм собирает часы из случайной кучи деталей: 30 шестерён, 7 стрелок, храповик, пружина, корпус.
+      По мотивам видео <a href="https://www.youtube.com/watch?v=mcAq9bmCeR0" target="_blank" rel="noopener">«Evolution IS a Blind Watchmaker»</a>.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="Один турнир: 3 случайных часов, худшие умирают, двое оставшихся дают потомка">1 спаривание</button>
+      <button id="btn-gen" title="Столько спариваний, сколько часов в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул часов
+        <select id="cfg-pop">
+          <option>500</option><option>1000</option><option selected>2000</option><option>5000</option><option>10000</option>
+        </select>
+      </label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Макс. зубьев <input id="cfg-teeth" type="number" min="10" max="1000" value="1000"></label>
+      <label>Связей в начале <input id="cfg-bonds" type="number" min="0" max="100" value="10"></label>
+      <label>Целевые периоды, с <input id="cfg-targets" type="text" value="60, 3600, 86400"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-error-on" type="checkbox" checked> все стрелки точнее
+        <input id="stop-error" type="number" min="0" step="any" value="0.0001" style="width: 90px"> %</label>
+      <label title="Осторожно: в эпоху маятников улучшений нет сотнями поколений"><input id="stop-stag-on" type="checkbox"> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="500"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox"> предел
+        <input id="stop-max" type="number" min="1" value="5000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <main>
+    <section class="panel clock-panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучшие часы в пуле</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="imported" disabled>Загруженные из файла</option>
+          </select>
+        </h2>
+        <label class="inline">Скорость времени
+          <select id="time-speed">
+            <option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option>
+            <option value="600">600×</option><option value="3600">3600×</option>
+          </select>
+        </label>
+      </div>
+      <canvas id="clock-canvas" width="640" height="500"></canvas>
+      <div id="clock-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить эти часы (JSON)</button>
+        <label class="file-button">Загрузить часы<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 спаривание», чтобы увидеть один шаг эволюции подробно.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Геном показанных часов</h2>
+      <p class="note">Матрица «кто к кому прикреплён»: 79 точек крепления по каждой оси. Закрашенная клетка — связь.
+        Цвет показывает, что эта связь делает в механизме. Наведи мышь на клетку.</p>
+      <canvas id="genome-canvas" width="571" height="571"></canvas>
+      <div id="genome-hover" class="info hover">&nbsp;</div>
+      <div id="genome-legend" class="legend"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Связи механизма</h2>
+      <div id="bond-list" class="info"></div>
+      <h2>Почему что-то не работает</h2>
+      <div id="jam-list" class="info"></div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Геном</b> (<code>js/genome.js</code>): список связей между точками крепления деталей
+        плюс число зубьев у каждой шестерни и длина каждой стрелки. Геном ничего не знает про часы.</li>
+      <li><b>Механизм</b> (<code>js/mechanism.js</code>): по связям выясняем, что получилось. Маятник? Спуск? Крутится ли передача?
+        Какой период у каждой стрелки? Здесь вся «физика».</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): одно число — насколько хорошо часы показывают время.
+        Отбор видит только его.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): берём трёх случайных, худший умирает, двое лучших дают потомка с одной мутацией.
+        И так по кругу.</li>
+      <li><b>Картинки</b> (<code>js/draw-*.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/genome.js"></script>
+  <script src="js/mechanism.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw-mechanism.js"></script>
+  <script src="js/draw-charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
