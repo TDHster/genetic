@@ -1,6 +1,6 @@
 # genetic — учебные проекты: генетический алгоритм проектирует механизмы
 
-Один git-репозиторий (https://github.com/TDHster/genetic, публичный), четыре независимых проекта в подпапках.
+Один git-репозиторий (https://github.com/TDHster/genetic, публичный), пять независимых проектов в подпапках.
 Сайт: https://genetic.tdhster.workers.dev/ — главная `index.html` с карточками проектов.
 
 ## Архитектура
@@ -15,10 +15,11 @@
 | `teo-leg/` | Шагающая нога на кривошипе; эталон — нога Тео Янсена | `file://` или сервер | [teo-leg/CLAUDE.md](teo-leg/CLAUDE.md) |
 | `builder/` | Самая высокая постройка из неровных камней (физика Rapier, 3D three.js) | только сервер | [builder/CLAUDE.md](builder/CLAUDE.md) |
 | `coast/` | Защита набережной от столетнего шторма (мелкая вода, EurOtop, 3D three.js) | только сервер | [coast/CLAUDE.md](coast/CLAUDE.md) |
+| `vawt/` | Ротор ветряка с вертикальной осью (Дарье; аэродинамика DMST, 3D three.js) | только сервер | [vawt/CLAUDE.md](vawt/CLAUDE.md) |
 
 Типовое устройство проекта: `index.html` + `style.css`, `js/` (rng, геном/модель, fitness, evolution, отрисовка, app),
 `tools/headless.*` — тот же код в Node без браузера (на сайт не попадает). Библиотеки лежат в репо, без CDN:
-`builder/vendor/` (three.js, Rapier с вшитым wasm), `coast/lib/` (three.js). Детали, эталоны для регрессии и
+`builder/vendor/` (three.js, Rapier с вшитым wasm), `coast/lib/` и `vawt/lib/` (three.js). Детали, эталоны для регрессии и
 найденные лазейки — в `CLAUDE.md` и `README.md` проекта: **перед работой над проектом читать его CLAUDE.md.**
 
 Корень: `index.html` (главная), `README.md` (обзор для людей), `make-site.sh` (сборка сайта),

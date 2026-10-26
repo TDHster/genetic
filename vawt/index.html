@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ветряк с вертикальной осью</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./lib/three.module.js", "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Эволюция ветряка с вертикальной осью</h1>
+    <p>Генетический алгоритм проектирует ротор Дарье для крыши: <b>сколько лопастей</b>, какой они формы
+      (прямые, выгнутые «взбивалкой», закрученные спиралью), какой ширины и толщины, под каким углом стоят.
+      Ротор должен уместиться в цилиндр высотой 3 м и радиусом 1,2 м. Цель — <b>больше энергии за год</b>,
+      но ротор должен <b>сам стартовать</b> (у классического ротора Дарье это знаменитая проблема), крутить <b>без рывков</b>
+      и не тратить лишний материал. Аэродинамика — модель трубок тока (DMST), как в инженерных расчётах.
+      Эталон — самый распространённый малый ветряк: три прямые лопасти NACA0018 на траверсах.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="8 потомков: родители из турниров, каждый потомок проходит расчёт, за каждого погибает худший из трёх">1 пачка (8 потомков)</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул роторов
+        <select id="cfg-pop">
+          <option>50</option><option selected>100</option><option>200</option><option>400</option>
+        </select>
+      </label>
+      <label title="Защита новинок (как в NEAT): роторы делятся на виды по числу лопастей, у каждого вида свои места в пуле"><input id="cfg-species" type="checkbox" checked> виды</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-ref-on" type="checkbox"> лучше эталона на
+        <input id="stop-ref" type="number" min="0" step="any" value="50"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="60"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="400"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="views">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший ротор в пуле</option>
+            <option value="reference">Эталон: H-ротор, 3 прямые лопасти</option>
+            <option value="gorlov">Спираль Горлова (закрутка 120°)</option>
+            <option value="egg">«Взбивалка» Дарье (2 выгнутые лопасти)</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="species" disabled>Лучший ротор выбранного вида</option>
+            <option value="imported" disabled>Загруженный из файла</option>
+          </select>
+        </h2>
+        <div class="modes">
+          <label class="inline">Ветер <input id="wind" type="range" min="3" max="14" step="0.5" value="7"><output id="wind-out"></output></label>
+          <button id="btn-mode-run" class="active" title="Ротор крутится на рабочих оборотах: контроллер держит лучшую быстроходность">Работа</button>
+          <button id="btn-mode-start" title="Ротор стоит, дует ветер. Стартует ли сам? Тот же момент, что в оценке, плюс трение и инерция">Пуск с места</button>
+          <label class="inline">Время
+            <select id="time-scale">
+              <option value="0.25">¼×</option><option value="1" selected>1×</option><option value="10">10×</option><option value="30">30×</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="view3d"></div>
+      <div class="alpha-legend">
+        <span>Лопасть — угол атаки сейчас: <span class="bar"></span> небольшой · у срыва · срыв</span>
+        <span>Частицы — скорость ветра: <span class="wind-bar"></span> медленно · как вдали</span>
+      </div>
+      <div class="live" id="live"></div>
+      <div id="spinup-wrap" style="display:none">
+        <canvas id="spinup-canvas" width="760" height="150"></canvas>
+      </div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Ветер дует слева направо (от камеры — вглубь вправо).
+        Цвета и скорости частиц — из той же модели трубок тока, что и оценка.</p>
+    </section>
+    <section class="panel chart-grid">
+      <h2>Момент за один оборот</h2>
+      <canvas id="torque-canvas" width="560" height="190"></canvas>
+      <p class="note">Тонкие линии — каждая лопасть, белая — весь ротор, пунктир — среднее. Лопасть тянет на наветренной стороне
+        и почти ничего не даёт сбоку. Спираль размазывает рывки — белая линия становится ровной.</p>
+      <h2>Коэффициент мощности Cp(λ)</h2>
+      <canvas id="cp-canvas" width="560" height="190"></canvas>
+      <p class="note">Голубая — этот ротор, жёлтый пунктир — эталон. Больше 0,593 (предел Бетца) не бывает ни у какого ветряка.</p>
+      <h2>Хватит ли момента на разгон</h2>
+      <canvas id="start-canvas" width="560" height="190"></canvas>
+      <p class="note">Средний момент на пути от покоя до рабочих оборотов. Столбик у λ = 0 — разброс момента в покое по положениям ротора.
+        Ниже красной линии трения ротор не разгонится: провал около λ = 1…2 — «мёртвая зона» роторов Дарье.</p>
+      <h2>Мощность по ветру</h2>
+      <canvas id="power-canvas" width="560" height="190"></canvas>
+      <p class="note">Бледная часть кривой — ветры, при которых ротор сам не стартует.</p>
+    </section>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Из чего складывается оценка</h2>
+      <div id="score-info" class="info"></div>
+      <h2>Ротор (геном)</h2>
+      <canvas id="profile-canvas" width="560" height="240"></canvas>
+      <div id="genome-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить этот ротор (JSON)</button>
+        <label class="file-button">Загрузить ротор<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — эталон.</p>
+
+      <h2>Виды</h2>
+      <p class="note">Вид — число лопастей. Квота — сколько мест в пуле положено виду: свежий 5-лопастный ротор сначала хуже
+        настроенного 2-лопастного и без защиты погиб бы в первом турнире. Нажми на строку, чтобы посмотреть лучший ротор вида.</p>
+      <div id="species-info" class="info"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.</div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Профиль лопасти</b> (<code>js/airfoil.js</code>): подъёмная сила и сопротивление NACA 00xx при любом угле атаки —
+        до срыва как у крыла, после срыва как у пластины. Толстый профиль срывается позже, но сильнее тормозит;
+        узкая или медленная лопасть (малое число Рейнольдса) работает хуже.</li>
+      <li><b>Ротор</b> (<code>js/rotor.js</code>): геном — число лопастей, радиус в 5 точках по высоте, хорда в 3 точках,
+        закрутка спиралью, установочный угол и толщина профиля. Если конец лопасти далеко от вала, нужна траверса —
+        это материал и лишнее сопротивление.</li>
+      <li><b>Аэродинамика</b> (<code>js/aero.js</code>): модель двойных трубок тока (DMST, Парашивою, 1981). Ротор режется
+        на 8 срезов, поток через каждый — на 18 трубок. Лопасти тормозят ветер дважды: на наветренной половине и на подветренной.
+        Торможение в каждой трубке подбирается так, чтобы сила лопастей равнялась потере импульса воздуха.
+        Итог — таблица момента по быстроходности и углу поворота.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): 1 + энергия за год × плавность × материал / 100;
+        энергия считается с учётом самозапуска.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в часах, ноге Янсена и набережной: трое, худший умирает,
+        потомок с мутацией, виды с квотами. Потомки считаются пачками по 8 в фоновых потоках (Web Workers).</li>
+      <li><b>Картинки</b> (<code>js/draw2d.js</code>, <code>js/view3d.js</code> на three.js) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/airfoil.js"></script>
+  <script src="js/rotor.js"></script>
+  <script src="js/aero.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw2d.js"></script>
+  <script src="js/app.js"></script>
+  <script type="module" src="js/view3d.js"></script>
+</body>
+</html>
