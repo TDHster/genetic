@@ -12,7 +12,7 @@
 
 import * as THREE from '../vendor/three.module.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
-import { Trial } from './physics.js';
+import { Trial, GATE_HEIGHT, GATE_DEPTH } from './physics.js';
 
 const DROP_FRAMES = 6;
 const BUILD_FRAMES = 480;
@@ -90,6 +90,17 @@ export class StructureView {
     this.world.add(this.marker);
 
     this.box = new THREE.BoxGeometry(1, 1, 1);
+    // Gate mode: the passage (blue, stays) and its centering (wood, goes with the scaffolding).
+    this.passage = new THREE.Mesh(this.box, new THREE.MeshBasicMaterial({ color: 0x5b8def, transparent: true,
+      opacity: 0.18, depthWrite: false }));
+    this.centeringMesh = new THREE.Mesh(this.box, new THREE.MeshStandardMaterial({ color: 0x9a6b3c, transparent: true,
+      opacity: 0.45 }));
+    // Round centering: a half-cylinder along z (a cylinder of radius 1 and length 1, scaled).
+    this.archMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 32, 1, false, -Math.PI / 2, Math.PI),
+      this.centeringMesh.material);
+    this.archMesh.rotation.x = Math.PI / 2;
+    this.passage.visible = this.centeringMesh.visible = this.archMesh.visible = false;
+    this.world.add(this.passage, this.centeringMesh, this.archMesh);
     this.stoneMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
     this.postMaterial = new THREE.MeshStandardMaterial({ color: 0x9a6b3c, transparent: true, opacity: 0.55 });
     this.tmp = { m: new THREE.Matrix4(), p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3(),
@@ -138,8 +149,17 @@ export class StructureView {
     this.trial = new Trial(this.R, quarry, genome, opts);
     this.iter = this.trial.run();
     this.ensureCapacity(quarry.length);
+    const gw = opts.gateWidth || 0;
+    for (const m of [this.passage, this.centeringMesh]) {
+      m.scale.set(gw, GATE_HEIGHT, GATE_DEPTH);
+      m.position.set(0, GATE_HEIGHT / 2, 0);
+    }
+    this.passage.visible = gw > 0 && !opts.gateArch;
+    this.centeringMesh.visible = gw > 0 && opts.scaffold && !opts.gateArch;
+    this.archMesh.visible = gw > 0 && opts.scaffold && !!opts.gateArch;
+    this.archMesh.scale.set(gw / 2, GATE_DEPTH, gw / 2);
     // Stones per frame while building: the construction takes about BUILD_FRAMES frames.
-    this.buildRate = Math.max(1 / DROP_FRAMES, genome.placements.length / BUILD_FRAMES);
+    this.buildRate = Math.max(1 / DROP_FRAMES, this.trial.plan.length / BUILD_FRAMES);
     this.buildBudget = 0;
     this.onDone = onDone;
     this.finished = false;
@@ -208,11 +228,12 @@ export class StructureView {
           const ev = r.value;
           if (ev.phase === 'place') {
             this.addStone(this.trial.items[ev.index]);
-            this.setLabel(`стройка: камень ${ev.index + 1} из ${this.trial.genome.placements.length}`);
+            this.setLabel(`стройка: камень ${ev.index + 1} из ${this.trial.plan.length}`);
             break;
           }
           if (ev.phase === 'release') {
             this.postMesh.visible = false;
+            this.centeringMesh.visible = this.archMesh.visible = false;
             this.building = false;
             this.setLabel('леса убраны');
             return;

@@ -10,9 +10,15 @@
 //   tilt    - tilt from the vertical, degrees 0..90 (wedges of an arch need it).
 // The stone is lowered from above until it touches the ground or earlier stones (see physics.js),
 // so any genome builds something: the order of the list is the order of construction.
+//
+// Rules (`rules`, passed to randomGenome and mutate): {noEnd} - the masonry rule "a stone is laid
+// on its bed or on its edge, never on its end": axis is 1 or 2 and the tilt at most MAX_TILT_NO_END
+// (a flat stone tilted by 90° would be on its end again). Without it evolution always ended up with a
+// column of stones on their ends - 30 cm of height per stone.
 
 export const AREA = 3;
 export const MAX_TILT = 90;
+export const MAX_TILT_NO_END = 30;
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -23,26 +29,28 @@ function unusedStones(placements, stoneCount) {
   return free;
 }
 
-function randomPlacement(rng, stone, cx, cz, spread) {
+const maxTilt = (rules) => (rules.noEnd ? MAX_TILT_NO_END : MAX_TILT);
+
+function randomPlacement(rng, stone, cx, cz, spread, rules) {
   return {
     stone,
     x: clamp(cx + spread * rng.normal(), -AREA, AREA),
     z: clamp(cz + spread * rng.normal(), -AREA, AREA),
     yaw: 360 * rng.next(),
-    axis: rng.int(3),
+    axis: rules.noEnd ? 1 + rng.int(2) : rng.int(3),
     tiltDir: 360 * rng.next(),
-    tilt: rng.chance(0.8) ? 0 : MAX_TILT * rng.next(),
+    tilt: rng.chance(0.8) ? 0 : maxTilt(rules) * rng.next(),
   };
 }
 
 // A starting genome: a few stones dropped near the centre.
-export function randomGenome(rng, stoneCount) {
+export function randomGenome(rng, stoneCount, rules = {}) {
   const n = Math.min(stoneCount, rng.intRange(5, 20));
   const free = Array.from({ length: stoneCount }, (_, i) => i);
   const placements = [];
   for (let i = 0; i < n; i++) {
     const stone = free.splice(rng.int(free.length), 1)[0];
-    placements.push(randomPlacement(rng, stone, 0, 0, 0.2));
+    placements.push(randomPlacement(rng, stone, 0, 0, 0.2, rules));
   }
   return { placements };
 }
@@ -99,7 +107,7 @@ function pickMutation(rng) {
 }
 
 // Changes the genome in place. Returns the mutation name (for statistics).
-export function mutate(rng, g, stoneCount) {
+export function mutate(rng, g, stoneCount, rules = {}) {
   const list = g.placements;
   let kind = pickMutation(rng);
   // Mutations that need a stone in the plan turn into an insert when the plan is empty.
@@ -122,13 +130,14 @@ export function mutate(rng, g, stoneCount) {
       p.yaw = rng.chance(0.5) ? (p.yaw + 15 * rng.normal() + 360) % 360 : 360 * rng.next();
       break;
     case 'axis':
-      p.axis = (p.axis + 1 + rng.int(2)) % 3;
+      p.axis = rules.noEnd ? (p.axis === 1 ? 2 : 1) : (p.axis + 1 + rng.int(2)) % 3;   // noEnd: 1 <-> 2
       break;
     case 'tilt': {
       const r = rng.next();
-      if (r < 0.5) p.tilt = clamp(p.tilt + 10 * rng.normal(), 0, MAX_TILT);
+      const max = maxTilt(rules);
+      if (r < 0.5) p.tilt = clamp(p.tilt + 10 * rng.normal(), 0, max);
       else if (r < 0.8) p.tilt = 0;
-      else { p.tilt = MAX_TILT * rng.next(); p.tiltDir = 360 * rng.next(); }
+      else { p.tilt = max * rng.next(); p.tiltDir = 360 * rng.next(); }
       if (rng.chance(0.3)) p.tiltDir = (p.tiltDir + 30 * rng.normal() + 360) % 360;
       break;
     }
@@ -146,7 +155,7 @@ export function mutate(rng, g, stoneCount) {
       const stone = free[rng.int(free.length)];
       // New stones go next to an existing one: that is how a structure grows upwards.
       const near = p || { x: 0, z: 0 };
-      list.splice(rng.intRange(0, list.length), 0, randomPlacement(rng, stone, near.x, near.z, 0.1));
+      list.splice(rng.intRange(0, list.length), 0, randomPlacement(rng, stone, near.x, near.z, 0.1, rules));
       break;
     }
     case 'duplicate': {

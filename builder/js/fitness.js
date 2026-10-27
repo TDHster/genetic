@@ -1,6 +1,8 @@
 // Fitness: how tall the structure is after the tests, plus metrics for the UI.
 //
 // score = height of the highest stone point after the last test (metres).
+// "Whole pile" (opts.pile): score = height x share of the quarry's stones in the structure - build the
+// whole pile as high as you can, not the tallest column out of 20 stones of 300.
 // Fallen stones lie low, so collapse punishes itself; nothing else is rewarded.
 // The metrics below do not affect evolution - they only help to see what it invented:
 //   fallen   - stones that dropped more than FALL_DROP during the tilt tests (after settling);
@@ -8,14 +10,47 @@
 //              (a stone bridging a gap: a lintel, a corbel or a wedge of an arch);
 //   structure - stones connected to the highest stone through contacts (without the ground):
 //              the building itself, without the rubble around it;
+//   level    - share of the structure's stones with one of their axes within LEVEL_DEG of the vertical
+//              (lying flat, on edge or on end, not tumbled): laid masonry is level, a heap is not;
 //   profile  - max horizontal radius of the structure's stone corners in PROFILE_BANDS height bands,
 //              from the centre of its base; a cone has radii shrinking upwards.
 
-import { rotatePoint, stoneTop } from './physics.js';
+import { rotatePoint, stoneTop, GATE_HEIGHT, GATE_DEPTH } from './physics.js';
+
+export const GATE_BLOCK_PENALTY = 0.8;   // score factor per stone left inside the passage (0.5 was too harsh:
+                                         // one stray stone halved the score and evolution could not feel its way)
+
+// Gate mode (opts.gateWidth): the structure must stand OVER the passage. The height counted is the top
+// of the stones that cross its centre line x = 0 (a stone beside the passage does not count), and every
+// stone left inside the passage costs 20 % of the score - a heap that fills the passage is no bridge.
+// Returns {above, blocked}.
+// With a round centering (arch) the passage is the half-disc under it, not a box GATE_HEIGHT high.
+function gateMeasure(corners, width, arch) {
+  const r = width / 2 - 0.01;
+  const inside = (c) => (arch ? c[1] > 0 && Math.hypot(c[0], c[1]) < r
+    : Math.abs(c[0]) < r && c[1] < GATE_HEIGHT - 0.01) && Math.abs(c[2]) < GATE_DEPTH / 2;
+  let above = 0;
+  let blocked = 0;
+  for (const cs of corners) {
+    let xmin = Infinity, xmax = -Infinity;
+    for (const c of cs) { xmin = Math.min(xmin, c[0]); xmax = Math.max(xmax, c[0]); }
+    if (xmin < 0 && xmax > 0) above = Math.max(above, Math.max(...cs.map((c) => c[1])));
+    // Inside: a corner within the passage (1 cm of slack at its walls and roof).
+    if (cs.some(inside)) blocked++;
+  }
+  return { above, blocked };
+}
 
 export const FALL_DROP = 0.05;
 export const HANG_GAP = 0.05;
 export const PROFILE_BANDS = 5;
+export const LEVEL_DEG = 3;
+const LEVEL_COS = Math.cos(LEVEL_DEG * Math.PI / 180);
+
+function isLevel(it) {
+  const q = it.body.rotation();
+  return [[1, 0, 0], [0, 1, 0], [0, 0, 1]].some((a) => Math.abs(rotatePoint(q, ...a)[1]) > LEVEL_COS);
+}
 
 function worldCorners(it) {
   const pos = it.body.translation();
@@ -73,8 +108,20 @@ export function measureStructure(trial) {
     }
   }
 
+  const share = structure.length / trial.quarry.length;
+  const level = structure.length ? items.filter((it, i) => inStructure[i] && isLevel(it)).length / structure.length : 0;
+  let score = height;
+  let gate = null;
+  if (trial.opts.gateWidth) {
+    gate = gateMeasure(corners, trial.opts.gateWidth, trial.opts.gateArch);
+    score = gate.above * GATE_BLOCK_PENALTY ** gate.blocked;
+  }
+  if (trial.opts.pile) score *= share;
   return {
-    score: height, height, stones: items.length, structure: structure.length, fallen, hanging, profile,
+    score,
+    gateAbove: gate ? gate.above : undefined,
+    gateBlocked: gate ? gate.blocked : undefined,
+    height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
   };
 }
 

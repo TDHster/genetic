@@ -12,13 +12,14 @@ export function initRapier() {
   return ready;
 }
 
-// cfg: {seed, stoneCount, scaffold, tiltDeg, sim?}. Returns (genome, abortBelow?) -> result.
+// cfg: {seed, stoneCount, scaffold, tiltDeg, pile, sim?}. Returns (genome, abortBelow?) -> result.
 // cfg.sim overrides simulation settings (SIM in physics.js) - for experiments from tools/headless.mjs.
 export async function makeEvaluator(cfg) {
   const R = await initRapier();
   if (cfg.sim) Object.assign(SIM, cfg.sim);
   const quarry = makeQuarry(cfg.stoneCount, cfg.seed);
-  const opts = { scaffold: cfg.scaffold, tiltDeg: cfg.tiltDeg };
+  const opts = { scaffold: cfg.scaffold, tiltDeg: cfg.tiltDeg, pile: cfg.pile, gateWidth: cfg.gateWidth, gateArch: cfg.gateArch,
+    mirror: cfg.mirror };
   return (genome, abortBelow) => evaluateGenome(R, quarry, genome, { ...opts, abortBelow });
 }
 

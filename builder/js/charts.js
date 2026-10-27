@@ -23,7 +23,7 @@ export function drawHistory(canvas, history) {
   const stepY = maxY > 4 ? 1 : 0.5;
   for (let v = 0; v <= maxY; v += stepY) {
     ctx.beginPath(); ctx.moveTo(pad.l, y(v)); ctx.lineTo(w - pad.r, y(v)); ctx.stroke();
-    ctx.fillText(`${v} м`, 4, y(v) + 4);
+    ctx.fillText(`${v}`, 4, y(v) + 4);
   }
   ctx.fillText('0', pad.l, h - 6);
   ctx.textAlign = 'right';
@@ -57,4 +57,58 @@ export function drawProfile(canvas, profile, height) {
     const top = h - 2 - (i + 1) * bandH * scale;
     ctx.fillRect(w / 2 - r * scale, top + 1, 2 * r * scale, bandH * scale - 2);
   });
+}
+
+// The map of finds: a grid of cells (columns - base radius bins, rows - taper bins, the most tapered
+// on top). archive: Map "i,j" -> individual. Returns a function (x, y) -> "i,j" for clicks.
+export function drawMap(canvas, archive, baseBins, taperBins, selected) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const cols = baseBins.length + 1, rows = taperBins.length + 1;
+  const pad = { l: 54, r: 6, t: 6, b: 34 };
+  const cw = (w - pad.l - pad.r) / cols, ch = (h - pad.t - pad.b) / rows;
+  const edges = (b) => ['<' + b[0], ...b.slice(1).map((v, i) => `${b[i]}–${v}`), '>' + b[b.length - 1]];
+  let maxScore = 0;
+  for (const ind of archive.values()) maxScore = Math.max(maxScore, ind.result.score);
+
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      const x = pad.l + i * cw, y = pad.t + j * ch;
+      const ind = archive.get(`${i},${j}`);
+      if (ind) {
+        const t = maxScore > 0 ? ind.result.score / maxScore : 0;
+        // From the panel colour to the accent (#ffb547) by score.
+        ctx.fillStyle = `rgb(${Math.round(26 + t * 229)}, ${Math.round(34 + t * 147)}, ${Math.round(64 + t * 7)})`;
+        ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+        ctx.fillStyle = t > 0.6 ? '#1a1200' : '#dfe5f5';
+        ctx.fillText(ind.result.height.toFixed(2), x + cw / 2, y + ch / 2);
+      } else {
+        ctx.strokeStyle = '#232c47';
+        ctx.strokeRect(x + 1.5, y + 1.5, cw - 3, ch - 3);
+      }
+      if (selected === `${i},${j}`) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 1, y + 1, cw - 2, ch - 2);
+        ctx.lineWidth = 1;
+      }
+    }
+  }
+  ctx.fillStyle = '#8d97b5';
+  edges(baseBins).forEach((e, i) => ctx.fillText(e, pad.l + (i + 0.5) * cw, h - pad.b + 10));
+  ctx.fillText('радиус основания, м', pad.l + (w - pad.l - pad.r) / 2, h - 8);
+  ctx.textAlign = 'right';
+  edges(taperBins).forEach((e, j) => ctx.fillText(e, pad.l - 6, pad.t + (j + 0.5) * ch));
+
+  return (px, py) => {
+    const i = Math.floor((px - pad.l) / cw), j = Math.floor((py - pad.t) / ch);
+    return i >= 0 && i < cols && j >= 0 && j < rows ? `${i},${j}` : null;
+  };
 }

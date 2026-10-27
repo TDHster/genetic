@@ -4,10 +4,10 @@
 // structure in the main thread with the same physics code.
 
 import RAPIER from '../vendor/rapier-simd.mjs';
-import { Evolution } from './evolution.js';
+import { Evolution, BASE_BINS, TAPER_BINS } from './evolution.js';
 import { WorkerPool } from './workers.js';
 import { StructureView } from './scene3d.js';
-import { drawHistory, drawProfile } from './charts.js';
+import { drawHistory, drawProfile, drawMap } from './charts.js';
 import { makeQuarry } from './stones.js';
 
 const $ = (id) => document.getElementById(id);
@@ -23,11 +23,13 @@ let running = false;
 let busy = null;             // reset in progress
 const inFlight = new Set();  // promises of children being scored
 let targetMatings = 0;       // "1 поколение": keep starting children until this many matings
+let widening = null;         // the promise of widening the passage (no children start meanwhile)
 let stoppedBy = null;
 let genTimes = [];           // timestamps of recent generations, for the speed
 let evalTimes = [];          // timestamps of recent scored children, for the speed
 let shown = null;            // what the 3D view shows: {kind: 'best'|'imported', id, data}
 let finishedAt = 0;
+let mapHit = null;           // (x, y) -> map cell key, from the last drawMap
 
 const evaluateAll = (genomes, thresholds) => pool.evaluateAll(genomes, thresholds);
 
@@ -38,6 +40,12 @@ function readConfig() {
     stoneCount: Number($('cfg-stones').value),
     scaffold: $('cfg-scaffold').checked,
     tiltDeg: $('cfg-tilt-on').checked ? Number($('cfg-tilt').value) : 0,
+    pile: $('cfg-pile').checked,
+    noEnd: $('cfg-noend').checked,
+    gateWidth: $('cfg-gate-on').checked ? Number($('cfg-gate').value) : 0,
+    gateArch: $('cfg-arch').checked,
+    mirror: $('cfg-mirror').checked,
+    gateGrow: $('cfg-gate-grow').checked,
   };
 }
 
@@ -57,6 +65,7 @@ async function reset() {
   targetMatings = 0;
   updateRunButton();
   if (busy) await busy;
+  if (widening) await widening;
   await drain();
   stoppedBy = null;
   genTimes = [];
@@ -72,7 +81,25 @@ async function reset() {
 }
 
 function wantMore() {
-  return running || evo.matings + inFlight.size < targetMatings;
+  return !widening && (running || evo.matings + inFlight.size < targetMatings);
+}
+
+// The passage widens (see Evolution.gateReady): wait for the children in flight, give the workers the
+// new width, score the pool again, go on.
+async function widen() {
+  const e = evo;
+  widening = (async () => {
+    await drain();
+    e.widenGate();
+    await pool.init(e.evalConfig());
+    await e.rescore(evaluateAll);
+  })();
+  await widening;
+  widening = null;
+  if (e !== evo) return;
+  updatePanels();
+  showBest();
+  fill();
 }
 
 // Keeps IN_FLIGHT children being scored while evolution should go on.
@@ -80,7 +107,7 @@ function fill() {
   const e = evo;
   while (wantMore() && inFlight.size < IN_FLIGHT) {
     const job = e.startChild();
-    const p = pool.evaluate(job.genome, job.threshold).then((result) => {
+    const p = pool.evaluate(job.genome, job.abortBelow).then((result) => {
       inFlight.delete(p);
       if (e !== evo) return;   // a reset happened meanwhile
       const gen = Math.floor(e.generation);
@@ -92,6 +119,7 @@ function fill() {
         if (genTimes.length > 10) genTimes.shift();
         updatePanels();
       }
+      if (!widening && e.gateReady()) widen();
       const reason = running && e.stopReason();
       if (reason) {
         stoppedBy = reason;
@@ -142,10 +170,16 @@ function updatePanels() {
     const perSec = (evalTimes.length - 1) / ((evalTimes[evalTimes.length - 1] - evalTimes[0]) / 1000);
     speed += ` · ${perSec.toFixed(0)} оценок/с`;
   }
-  $('stats').innerHTML = `Поколение <b>${Math.floor(evo.generation)}</b> · лучшая <b>${evo.best.result.height.toFixed(2)} м</b>`
+  const b = evo.best.result;
+  const best = evo.cfg.pile ? `оценка <b>${b.score.toFixed(2)}</b> (${b.height.toFixed(2)} м × ${(100 * b.share).toFixed(0)} %)`
+    : `<b>${b.height.toFixed(2)} м</b>`;
+  const gate = evo.gateNow ? ` · проход <b>${Math.round(100 * evo.gateNow)} см</b>`
+    + (evo.cfg.gateGrow && evo.gateNow < evo.cfg.gateWidth ? ` (растёт до ${Math.round(100 * evo.cfg.gateWidth)})` : '') : '';
+  $('stats').innerHTML = `Поколение <b>${Math.floor(evo.generation)}</b> · лучшая ${best}${gate} · карта ${evo.archive.size} клеток`
     + ` · медиана ${h.median.toFixed(2)} м · воркеров ${WORKERS}${speed}`
     + (stoppedBy ? ` · <span class="stopped">остановлено: ${stoppedBy}</span>` : '');
   drawHistory($('chart-canvas'), evo.history);
+  redrawMap();
   // The tab title too: progress stays visible while the tab is in the background.
   document.title = `Каменщик · поколение ${Math.floor(evo.generation)} · ${evo.best.result.height.toFixed(2)} м`;
   if (shown && shown.kind === 'best' && shown.id !== evo.best.id && view.finished) {
@@ -163,8 +197,16 @@ function describe(result, born, replayHeight) {
     check = `<tr><th>Показ</th><td class="${same ? 'good' : 'bad'}">${replayHeight.toFixed(3)} м`
       + `${same ? ' — совпадает с оценкой' : ' — не совпадает с оценкой!'}</td></tr>`;
   }
+  const gatePart = result.gateAbove !== undefined
+    ? `высота над проходом × 0,8<sup>${result.gateBlocked}</sup>` : 'высота';
+  const score = result.share !== undefined && Math.abs(result.score - result.height) > 1e-9
+    ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = ${gatePart} × доля кучи ${(100 * result.share).toFixed(0)} %</td></tr>`
+    : '';
   return `<table>
     <tr><th>Высота</th><td><b>${result.height.toFixed(3)} м</b></td></tr>
+    ${result.gateAbove !== undefined ? `<tr><th>Над проходом</th><td>${result.gateAbove.toFixed(3)} м,
+      камней в проходе: ${result.gateBlocked}</td></tr>` : ''}
+    ${score}
     <tr><th>Камней в плане / в постройке</th><td>${result.stones} / ${result.structure}</td></tr>
     <tr><th>Упало при испытании</th><td>${result.fallen}</td></tr>
     <tr><th>Висячих (пролёты)</th><td>${result.hanging}</td></tr>
@@ -179,17 +221,37 @@ function showInfo(result, born, replayHeight) {
   drawProfile($('profile-canvas'), result.profile, result.height);
 }
 
+// Replays a structure of the current run (the best one or a cell of the map).
+function showIndividual(ind, title) {
+  $('view-title').textContent = title;
+  showInfo(ind.result, ind.born);
+  const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg, pile: evo.cfg.pile, gateWidth: evo.cfg.gateWidth,
+    gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror };
+  view.show(evo.quarry, ind.genome, opts, ind.result.height, (r) => {
+    finishedAt = performance.now();
+    showInfo(ind.result, ind.born, r.height);
+  });
+  redrawMap();
+}
+
 function showBest() {
   if (!evo || !evo.best) return;
   const best = evo.best;
   shown = { kind: 'best', id: best.id, title: `Лучшая постройка · поколение ${Math.floor(best.born)}` };
-  $('view-title').textContent = shown.title;
-  showInfo(best.result, best.born);
-  const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg };
-  view.show(evo.quarry, best.genome, opts, best.result.height, (r) => {
-    finishedAt = performance.now();
-    showInfo(best.result, best.born, r.height);
-  });
+  showIndividual(best, shown.title);
+}
+
+function showCell(key) {
+  const ind = evo && evo.archive.get(key);
+  if (!ind) return;
+  $('view-follow').checked = false;
+  shown = { kind: 'cell', key, id: ind.id };
+  showIndividual(ind, `Карта находок, клетка ${key} · поколение ${Math.floor(ind.born)}`);
+}
+
+function redrawMap() {
+  if (!evo) return;
+  mapHit = drawMap($('map-canvas'), evo.archive, BASE_BINS, TAPER_BINS, shown && shown.kind === 'cell' ? shown.key : null);
 }
 
 function showImported(data) {
@@ -198,7 +260,7 @@ function showImported(data) {
   $('view-title').textContent = `Загруженная постройка (seed ${data.seed}, ${data.scaffold ? 'с лесами' : 'без лесов'})`;
   showInfo(data.result);
   const quarry = makeQuarry(data.stoneCount, data.seed);
-  view.show(quarry, data.genome, { scaffold: data.scaffold, tiltDeg: data.tiltDeg }, data.result.height, (r) => {
+  view.show(quarry, data.genome, { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0, gateArch: !!data.gateArch, mirror: !!data.mirror }, data.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(data.result, undefined, r.height);
   });
@@ -206,11 +268,15 @@ function showImported(data) {
 
 function replay() {
   if (shown && shown.kind === 'imported') showImported(shown.data);
+  else if (shown && shown.kind === 'cell') showCell(shown.key);
   else showBest();
 }
 
 function exportShown() {
-  const data = shown && shown.kind === 'imported' ? shown.data : evo && evo.best ? evo.exportBest() : null;
+  let data = null;
+  if (shown && shown.kind === 'imported') data = shown.data;
+  else if (shown && shown.kind === 'cell' && evo.archive.get(shown.key)) data = evo.exportIndividual(evo.archive.get(shown.key));
+  else if (evo && evo.best) data = evo.exportBest();
   if (!data) return;
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -259,8 +325,15 @@ async function main() {
   $('btn-new-seed').onclick = () => { $('cfg-seed').value = 1 + Math.floor(Math.random() * 1e6); reset(); };
   $('cfg-tilt').oninput = () => { $('cfg-tilt-out').textContent = `${$('cfg-tilt').value}°`; };
   $('cfg-tilt-on').onchange = () => { $('cfg-tilt').disabled = !$('cfg-tilt-on').checked; };
+  $('cfg-gate').oninput = () => { $('cfg-gate-out').textContent = `${Math.round(100 * $('cfg-gate').value)} см`; };
+  $('cfg-gate-on').onchange = () => { $('cfg-gate').disabled = !$('cfg-gate-on').checked; };
   for (const id of ['stop-stag-on', 'stop-stag', 'stop-max-on', 'stop-max']) $(id).onchange = applyStopRules;
   $('btn-replay').onclick = replay;
+  $('map-canvas').onclick = (e) => {
+    const r = e.target.getBoundingClientRect();
+    const key = mapHit && mapHit(e.clientX - r.left, e.clientY - r.top);
+    if (key) showCell(key);
+  };
   $('view-speed').onchange = () => { view.speed = Number($('view-speed').value); };
   $('btn-export').onclick = exportShown;
   $('file-import').onchange = (e) => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ''; };

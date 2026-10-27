@@ -33,9 +33,18 @@
 // Bodies never sleep: a sleeping body ignores a change of gravity, and Rapier puts to sleep bodies
 // slower than 0.4 m/s - that would freeze a slowly toppling column half-way.
 //
+// Mirror symmetry (opts.mirror): the genome describes half of the structure. Every placement is followed
+// by its mirror image across the plane x = 0 (the axis of the passage in gate mode): x -> -x, the turn
+// reflected, and the stone from the second half of the quarry (stone + N/2: a little different, as real
+// stones are). Both sides rise together, as masons build an arch. Symmetry is a general principle
+// (living things are mostly bilateral), not a shape: but a portal or a vault has two equal sides, and
+// without it evolution had to find both independently.
+//
 // Gate mode (opts.gateWidth > 0): a passage GATE_HEIGHT high and gateWidth wide runs through the site
-// along z (|x| < gateWidth / 2). With scaffolding the passage is filled with a wooden centering box
-// while building - as real arches are built - and the box goes away with the scaffolding.
+// along z (|x| < gateWidth / 2). With scaffolding the passage is filled with a wooden centering
+// while building - as real arches are built - and the centering goes away with the scaffolding:
+// a box GATE_HEIGHT high, or with opts.gateArch a half-cylinder of radius gateWidth / 2 standing on the
+// ground (a round arch springs from the ground).
 // Without scaffolding there is no centering. Scoring of the gate mode is in fitness.js.
 //
 // The trial is a generator: evolution runs it to the end at once, the 3D view runs it step by step,
@@ -59,7 +68,9 @@ export const SIM = {
   turnTime: 1,            // turning the tilt to the next direction (0.25 s excited rocking that
                           // outlasted calmMax: a stable column scored as unstable)
   calmMin: 0.25,          // "until calm" phases last at least this long...
-  calmMax: 3,             // ...and at most this long
+  calmMax: 10,            // ...and at most this long (3 s was too short for big structures: a stepped
+                          // pyramid of 300 stones stood 20 s without a fallen stone but scored 0; 10 s
+                          // cost no speed with 100 stones)
   fixedPhase: 0,          // s: if set, every "until calm" phase lasts exactly this long, nothing is
                           // called unstable (experiment: is "until calm" needed at all?)
   calmWindow: 0.25,       // calm = over this window...
@@ -114,6 +125,25 @@ const BASE = [
   { x: 0, y: 0, z: 0, w: 1 },   // axis 1: local y up - on its edge
   quatAxisAngle(1, 0, 0, -90),  // axis 2: local z up - flat
 ];
+// The turn of a planned stone, reflected across x = 0 for a mirror copy (see the header):
+// conjugating by the reflection diag(-1, 1, 1) turns (x, y, z, w) into (x, -y, -z, w).
+function planRotation(p) {
+  const q = placementRotation(p);
+  return p.mirror ? { x: q.x, y: -q.y, z: -q.z, w: q.w } : q;
+}
+
+// The list of stones to build: the genome's placements, each followed by its mirror copy if opts.mirror.
+export function buildPlan(genome, quarryLength, mirror) {
+  if (!mirror) return genome.placements;
+  const half = Math.floor(quarryLength / 2);
+  const plan = [];
+  for (const p of genome.placements) {
+    if (p.stone >= half) continue;
+    plan.push(p, { ...p, x: -p.x, stone: p.stone + half, mirror: true });
+  }
+  return plan;
+}
+
 export function placementRotation(p) {
   const yaw = quatAxisAngle(0, 1, 0, p.yaw);
   const d = p.tiltDir * Math.PI / 180;
@@ -133,7 +163,8 @@ export function stoneTop(stone, pos, rot) {
 }
 
 export class Trial {
-  // opts: {scaffold: bool, tiltDeg: number, gateWidth?: number (m, 0 = no gate),
+  // opts: {scaffold: bool, tiltDeg: number, pile?: bool (score - see fitness.js), gateWidth?: number (m, 0 = no gate),
+  //        gateArch?: bool (round centering), mirror?: bool (symmetry, see the header),
   //        calmMin?: number (s, defaults to SIM.calmMin; longer = stricter, for checks),
   //        abortBelow?: number - stop as soon as the top is clearly below this score (see below)}
   constructor(R, quarry, genome, opts) {
@@ -142,12 +173,8 @@ export class Trial {
     this.genome = genome;
     this.opts = opts;
     [this.world, this.ground] = this.makeWorld();
-    this.centering = null;
-    if (opts.gateWidth && opts.scaffold) {
-      const body = this.world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, GATE_HEIGHT / 2, 0));
-      this.centering = this.world.createCollider(
-        R.ColliderDesc.cuboid(opts.gateWidth / 2, GATE_HEIGHT / 2, GATE_DEPTH / 2).setFriction(FRICTION), body);
-    }
+    this.centering = opts.gateWidth && opts.scaffold ? this.addCentering(this.world) : null;
+    this.plan = buildPlan(genome, quarry.length, opts.mirror);
     this.items = [];   // [{stone, placement, body, collider, placedY, settledY}] in construction order
     this.grid = new Map();   // "i,j" -> items whose horizontal extent touches the cell (scaffold mode)
     this.builtTop = 0;       // the highest point placed so far
@@ -167,6 +194,20 @@ export class Trial {
     w.integrationParameters.normalizedAllowedLinearError = SIM.allowedError;
     const ground = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0));
     return [w, w.createCollider(R.ColliderDesc.cuboid(50, 0.5, 50).setFriction(FRICTION), ground)];
+  }
+
+  // The centering of the gate (see the header) in world w. Returns its collider.
+  addCentering(w) {
+    const R = this.R;
+    const half = this.opts.gateWidth / 2;
+    if (this.opts.gateArch) {
+      // A cylinder lying along z, its axis on the ground: the half above the ground is the centering.
+      const body = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, 0, 0)
+        .setRotation({ x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 }));
+      return w.createCollider(R.ColliderDesc.cylinder(GATE_DEPTH / 2, half).setFriction(FRICTION), body);
+    }
+    const body = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, GATE_HEIGHT / 2, 0));
+    return w.createCollider(R.ColliderDesc.cuboid(half, GATE_HEIGHT / 2, GATE_DEPTH / 2).setFriction(FRICTION), body);
   }
 
   stoneCollider(stone) {
@@ -217,29 +258,35 @@ export class Trial {
     return top;
   }
 
-  // Lowers a stone: returns the height of its centre 2 mm above the first touch.
-  // Casts against colliders directly: the world's own scene queries are refreshed only by a physics
-  // step, so they would not see a stone placed a moment ago. With scaffolding only the stones in the
-  // grid cells under the new one are tried; without it stones move, so all of them.
-  lower(stone, p, rot) {
-    const shape = new this.R.ConvexPolyhedron(stone.points, null);
-    const startY = (this.opts.scaffold ? this.builtTop : this.currentTop()) + 1;
-    const from = { x: p.x, y: startY, z: p.z };
-    const down = { x: 0, y: -1, z: 0 };
-    const still = { x: 0, y: 0, z: 0 };
-    let drop = startY + 1;
+  // Distance a stone at `from` can move along the unit vector `dir` before it touches something
+  // (at most maxDist). Casts against colliders directly: the world's own scene queries are refreshed
+  // only by a physics step, so they would not see a stone placed a moment ago. With scaffolding only the
+  // stones in the grid cells it can reach are tried; without it stones move, so all of them.
+  castDistance(stone, shape, from, rot, dir, maxDist) {
     let near = this.items;
     if (this.opts.scaffold) {
       const e = this.extent(stone, from, rot);
-      near = this.gridQuery(e[0], e[1], e[2], e[3]);
+      const m = maxDist * Math.hypot(dir.x, dir.z);
+      near = this.gridQuery(e[0] - m, e[1] + m, e[2] - m, e[3] + m);
     }
     const obstacles = [this.ground, ...near.map((it) => it.collider)];
     if (this.centering) obstacles.push(this.centering);
+    const still = { x: 0, y: 0, z: 0 };
+    let dist = maxDist;
     for (const c of obstacles) {
-      const hit = c.castShape(still, shape, from, rot, down, 0, drop, true);
-      if (hit) drop = Math.min(drop, hit.time_of_impact);
+      const hit = c.castShape(still, shape, from, rot, dir, 0, dist, true);
+      if (hit) dist = Math.min(dist, hit.time_of_impact);
     }
-    return startY - drop + GAP;
+    return dist;
+  }
+
+  // Lowers a stone: returns the position of its centre, 2 mm above the first touch.
+  lower(stone, p, rot) {
+    const shape = new this.R.ConvexPolyhedron(stone.points, null);
+    const startY = (this.opts.scaffold ? this.builtTop : this.currentTop()) + 1;
+    const pos = { x: p.x, y: startY, z: p.z };
+    pos.y -= this.castDistance(stone, shape, pos, rot, { x: 0, y: -1, z: 0 }, startY + 1) - GAP;
+    return pos;
   }
 
   // Creates the stone's body in the main world. Returns the item.
@@ -259,10 +306,10 @@ export class Trial {
 
   // Bedding under scaffolding, in a small world: the new stone and the placed stones around it.
   // Returns its final pose {pos, rot}. Yields 'build' after every step.
-  *bed(stone, p, y, rot) {
+  *bed(stone, at, rot) {
     const R = this.R;
     const [w] = this.makeWorld();
-    const e = this.extent(stone, { x: p.x, y, z: p.z }, rot);
+    const e = this.extent(stone, at, rot);
     const m = BED_LIMIT + 0.05;
     for (const it of this.gridQuery(e[0] - m, e[1] + m, e[2] - m, e[3] + m)) {
       const b = w.createRigidBody(R.RigidBodyDesc.fixed()
@@ -270,12 +317,8 @@ export class Trial {
         .setRotation(it.body.rotation()));
       w.createCollider(this.stoneCollider(it.stone), b);
     }
-    if (this.centering) {
-      const b = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, GATE_HEIGHT / 2, 0));
-      w.createCollider(R.ColliderDesc.cuboid(this.opts.gateWidth / 2, GATE_HEIGHT / 2, GATE_DEPTH / 2)
-        .setFriction(FRICTION), b);
-    }
-    const body = w.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(p.x, y, p.z).setRotation(rot)
+    if (this.centering) this.addCentering(w);
+    const body = w.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(at.x, at.y, at.z).setRotation(rot)
       .setCanSleep(false));
     w.createCollider(this.stoneCollider(stone), body);
     const moving = [{ body }];
@@ -287,7 +330,7 @@ export class Trial {
       calm = this.isCalm(moving) ? calm + 1 : 0;
       if (calm >= steps(SIM.buildCalmTime)) break;
       const t = body.translation();
-      if (Math.hypot(t.x - p.x, t.y - y, t.z - p.z) > BED_LIMIT) break;
+      if (Math.hypot(t.x - at.x, t.y - at.y, t.z - at.z) > BED_LIMIT) break;
     }
     const pose = { pos: body.translation(), rot: body.rotation() };
     w.free();
@@ -373,21 +416,20 @@ export class Trial {
   // Yields {phase, ...} after every placement and every physics step; returns the result.
   *run() {
     const seen = new Set();
-    for (let i = 0; i < this.genome.placements.length; i++) {
-      const p = this.genome.placements[i];
+    for (const p of this.plan) {
       if (seen.has(p.stone) || p.stone >= this.quarry.length) continue;
       seen.add(p.stone);
       const stone = this.quarry[p.stone];
-      const rot = placementRotation(p);
-      const y = this.lower(stone, p, rot);
+      const rot = planRotation(p);
+      const at = this.lower(stone, p, rot);
       if (this.opts.scaffold) {
-        const pose = yield* this.bed(stone, p, y, rot);
+        const pose = yield* this.bed(stone, at, rot);
         this.addStone(stone, p, pose.pos, pose.rot, true);
         yield { phase: 'place', index: this.items.length - 1 };
         continue;
       }
       // Without scaffolding the whole structure must calm down before the next stone.
-      this.addStone(stone, p, { x: p.x, y, z: p.z }, rot, false);
+      this.addStone(stone, p, at, rot, false);
       yield { phase: 'place', index: this.items.length - 1 };
       let calm = 0;
       for (let s = 0; s < steps(SIM.buildMax); s++) {
