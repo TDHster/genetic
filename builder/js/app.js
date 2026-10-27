@@ -45,6 +45,9 @@ function readConfig() {
     gateWidth: $('cfg-gate-on').checked ? Number($('cfg-gate').value) : 0,
     gateArch: $('cfg-arch').checked,
     mirror: $('cfg-mirror').checked,
+    genome: $('cfg-tree').checked ? 'tree' : 'direct',
+    pedestal: $('cfg-pedestal').checked ? 0.2 : 0,
+    regular: $('cfg-regular').checked,
     gateGrow: $('cfg-gate-grow').checked,
   };
 }
@@ -199,9 +202,11 @@ function describe(result, born, replayHeight) {
   }
   const gatePart = result.gateAbove !== undefined
     ? `высота над проходом × 0,8<sup>${result.gateBlocked}</sup>` : 'высота';
-  const score = result.share !== undefined && Math.abs(result.score - result.height) > 1e-9
-    ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = ${gatePart} × доля кучи ${(100 * result.share).toFixed(0)} %</td></tr>`
-    : '';
+  const score = result.reach !== undefined
+    ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = вынос от центра пьедестала, м</td></tr>`
+    : result.share !== undefined && Math.abs(result.score - result.height) > 1e-9
+      ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = ${gatePart} × доля кучи ${(100 * result.share).toFixed(0)} %</td></tr>`
+      : '';
   return `<table>
     <tr><th>Высота</th><td><b>${result.height.toFixed(3)} м</b></td></tr>
     ${result.gateAbove !== undefined ? `<tr><th>Над проходом</th><td>${result.gateAbove.toFixed(3)} м,
@@ -225,8 +230,8 @@ function showInfo(result, born, replayHeight) {
 function showIndividual(ind, title) {
   $('view-title').textContent = title;
   showInfo(ind.result, ind.born);
-  const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg, pile: evo.cfg.pile, gateWidth: evo.cfg.gateWidth,
-    gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror };
+  const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg, pile: evo.cfg.pile, gateWidth: evo.gateNow,
+    gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror,     pedestal: evo.cfg.pedestal || 0 };
   view.show(evo.quarry, ind.genome, opts, ind.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(ind.result, ind.born, r.height);
@@ -259,8 +264,8 @@ function showImported(data) {
   $('view-follow').checked = false;
   $('view-title').textContent = `Загруженная постройка (seed ${data.seed}, ${data.scaffold ? 'с лесами' : 'без лесов'})`;
   showInfo(data.result);
-  const quarry = makeQuarry(data.stoneCount, data.seed);
-  view.show(quarry, data.genome, { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0, gateArch: !!data.gateArch, mirror: !!data.mirror }, data.result.height, (r) => {
+  const quarry = makeQuarry(data.stoneCount, data.seed, !!data.regular);
+  view.show(quarry, data.genome, { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0, gateArch: !!data.gateArch, mirror: !!data.mirror, pedestal: data.pedestal || 0 }, data.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(data.result, undefined, r.height);
   });

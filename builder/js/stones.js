@@ -21,24 +21,27 @@ export const DENSITY = 2400;         // kg/m^3, sandstone
 export const WEDGE_SHARE = 0.25;
 export const WEDGE_TAPER = [0.05, 0.2];
 
+// regular: perfect bricks - exactly BASE_SIZE, no corner error, no wedges (the same random draws are made,
+// so the colours stay). Courses then fit as planned: a tree genome's plan (tree-genome.js) and the physics agree.
 // Returns [{id, size: [sx, sy, sz], points: Float32Array(24), color, wedge}]
 // points are the 8 corners in the stone's local frame, centred on their average; wedge is the taper
 // (0 for a rectangular stone).
-export function makeQuarry(count, seed) {
+export function makeQuarry(count, seed, regular = false) {
   // A separate generator so the quarry does not depend on how evolution uses the main rng.
   const rng = makeRng(seed * 7919 + 17);
   const wedgeRng = makeRng(seed * 104729 + 3);
   const stones = [];
   for (let id = 0; id < count; id++) {
-    const size = BASE_SIZE.map((s) => s * (1 + SIZE_ERROR * (2 * rng.next() - 1)));
+    const size = BASE_SIZE.map((s) => s * (1 + (regular ? 0 : SIZE_ERROR) * (2 * rng.next() - 1)));
     const pts = [];
-    const wedge = wedgeRng.chance(WEDGE_SHARE)
+    const taper = wedgeRng.chance(WEDGE_SHARE)
       ? WEDGE_TAPER[0] + (WEDGE_TAPER[1] - WEDGE_TAPER[0]) * wedgeRng.next() : 0;
+    const wedge = regular ? 0 : taper;
     for (let i = 0; i < 8; i++) {
       const sign = [i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? 1 : -1];
       for (let a = 0; a < 3; a++) {
         const half = a === 1 ? size[a] / 2 * (1 + wedge * sign[2]) : size[a] / 2;
-        pts.push(sign[a] * half + CORNER_ERROR * (2 * rng.next() - 1));
+        pts.push(sign[a] * half + (regular ? 0 : CORNER_ERROR) * (2 * rng.next() - 1));
       }
     }
     // Centre the corners so the body origin is close to the centre of mass.

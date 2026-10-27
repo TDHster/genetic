@@ -47,6 +47,10 @@
 // ground (a round arch springs from the ground).
 // Without scaffolding there is no centering. Scoring of the gate mode is in fitness.js.
 //
+// Pedestal mode (opts.pedestal = half-size, m): there is no ground but a square pedestal (top at y = 0)
+// in a pit PIT_DEPTH deep. The task is reach (fitness.js): how far from the centre the structure gets.
+// A heap is useless here - it pours into the pit; only corbels, counterweights and cantilevers reach out.
+//
 // The trial is a generator: evolution runs it to the end at once, the 3D view runs it step by step,
 // so both see exactly the same simulation (Rapier is deterministic).
 
@@ -90,6 +94,7 @@ export const GAP = 0.002;
 export const G = 9.81;
 export const GATE_HEIGHT = 0.3;
 export const GATE_DEPTH = 4;      // along z: through the whole building site
+export const PIT_DEPTH = 1.5;     // pedestal mode: depth of the pit around the pedestal
 const ABORT_MARGIN = 0.01;
 const ABORT_EVERY = 10;
 const GRID = 0.5;           // m: cell of the grid of placed stones
@@ -151,6 +156,13 @@ export function placementRotation(p) {
   return quatMul(tilt, quatMul(yaw, BASE[p.axis]));
 }
 
+// Angle (degrees) between the vertical and the closest of the stone's axes: 0 for a stone lying flat,
+// on edge or on end, larger for a tumbled one.
+export function levelAngle(rot) {
+  const up = Math.max(...[[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((a) => Math.abs(rotatePoint(rot, ...a)[1])));
+  return Math.acos(Math.min(1, up)) * 180 / Math.PI;
+}
+
 // Highest point of a stone's corners in world space.
 export function stoneTop(stone, pos, rot) {
   let top = -Infinity;
@@ -165,6 +177,7 @@ export function stoneTop(stone, pos, rot) {
 export class Trial {
   // opts: {scaffold: bool, tiltDeg: number, pile?: bool (score - see fitness.js), gateWidth?: number (m, 0 = no gate),
   //        gateArch?: bool (round centering), mirror?: bool (symmetry, see the header),
+  //        pedestal?: number (half-size of the pedestal, m; 0 = ground everywhere, see the header),
   //        calmMin?: number (s, defaults to SIM.calmMin; longer = stricter, for checks),
   //        abortBelow?: number - stop as soon as the top is clearly below this score (see below)}
   constructor(R, quarry, genome, opts) {
@@ -172,7 +185,7 @@ export class Trial {
     this.quarry = quarry;
     this.genome = genome;
     this.opts = opts;
-    [this.world, this.ground] = this.makeWorld();
+    [this.world, this.grounds] = this.makeWorld();
     this.centering = opts.gateWidth && opts.scaffold ? this.addCentering(this.world) : null;
     this.plan = buildPlan(genome, quarry.length, opts.mirror);
     this.items = [];   // [{stone, placement, body, collider, placedY, settledY}] in construction order
@@ -182,8 +195,8 @@ export class Trial {
     this.result = null;
   }
 
-  // A world with the simulation settings and the ground: a large fixed slab with its top at y = 0.
-  // Returns [world, ground collider].
+  // A world with the simulation settings and the ground: a large fixed slab with its top at y = 0
+  // (pedestal mode: the pedestal, top at y = 0, and the floor of the pit). Returns [world, ground colliders].
   makeWorld() {
     const R = this.R;
     const w = new R.World({ x: 0, y: -G, z: 0 });
@@ -192,8 +205,11 @@ export class Trial {
     w.integrationParameters.numInternalPgsIterations = SIM.pgsIterations;
     w.integrationParameters.contact_natural_frequency = SIM.contactFrequency;
     w.integrationParameters.normalizedAllowedLinearError = SIM.allowedError;
-    const ground = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0));
-    return [w, w.createCollider(R.ColliderDesc.cuboid(50, 0.5, 50).setFriction(FRICTION), ground)];
+    const slab = (x, y, z, hx, hy, hz) => w.createCollider(R.ColliderDesc.cuboid(hx, hy, hz).setFriction(FRICTION),
+      w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(x, y, z)));
+    const p = this.opts.pedestal;
+    if (!p) return [w, [slab(0, -0.5, 0, 50, 0.5, 50)]];
+    return [w, [slab(0, -PIT_DEPTH / 2, 0, p, PIT_DEPTH / 2, p), slab(0, -PIT_DEPTH - 0.5, 0, 50, 0.5, 50)]];
   }
 
   // The centering of the gate (see the header) in world w. Returns its collider.
@@ -269,7 +285,7 @@ export class Trial {
       const m = maxDist * Math.hypot(dir.x, dir.z);
       near = this.gridQuery(e[0] - m, e[1] + m, e[2] - m, e[3] + m);
     }
-    const obstacles = [this.ground, ...near.map((it) => it.collider)];
+    const obstacles = [...this.grounds, ...near.map((it) => it.collider)];
     if (this.centering) obstacles.push(this.centering);
     const still = { x: 0, y: 0, z: 0 };
     let dist = maxDist;
@@ -285,7 +301,8 @@ export class Trial {
     const shape = new this.R.ConvexPolyhedron(stone.points, null);
     const startY = (this.opts.scaffold ? this.builtTop : this.currentTop()) + 1;
     const pos = { x: p.x, y: startY, z: p.z };
-    pos.y -= this.castDistance(stone, shape, pos, rot, { x: 0, y: -1, z: 0 }, startY + 1) - GAP;
+    const depth = startY + 1 + (this.opts.pedestal ? PIT_DEPTH : 0);
+    pos.y -= this.castDistance(stone, shape, pos, rot, { x: 0, y: -1, z: 0 }, depth) - GAP;
     return pos;
   }
 

@@ -12,7 +12,7 @@
 
 import * as THREE from '../vendor/three.module.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
-import { Trial, GATE_HEIGHT, GATE_DEPTH } from './physics.js';
+import { Trial, GATE_HEIGHT, GATE_DEPTH, PIT_DEPTH } from './physics.js';
 
 const DROP_FRAMES = 6;
 const BUILD_FRAMES = 480;
@@ -80,6 +80,14 @@ export class StructureView {
     const grid = new THREE.GridHelper(10, 20, 0x3b4668, 0x3b4668);  // 0.5 m cells
     grid.position.y = 0.001;
     this.world.add(grid);
+    this.groundMesh = ground;
+    this.gridMesh = grid;
+    // Pedestal mode: the pedestal stands in a pit; the ground and the grid go down to the pit's floor.
+    this.pedestalMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x59617d, roughness: 1 }));
+    this.pedestalMesh.receiveShadow = this.pedestalMesh.castShadow = true;
+    this.pedestalMesh.visible = false;
+    this.world.add(this.pedestalMesh);
 
     // Height marker: a thin translucent disc at the final height.
     this.marker = new THREE.Mesh(
@@ -149,6 +157,12 @@ export class StructureView {
     this.trial = new Trial(this.R, quarry, genome, opts);
     this.iter = this.trial.run();
     this.ensureCapacity(quarry.length);
+    const ped = opts.pedestal || 0;
+    this.pedestalMesh.visible = ped > 0;
+    this.pedestalMesh.scale.set(2 * ped, PIT_DEPTH, 2 * ped);
+    this.pedestalMesh.position.y = -PIT_DEPTH / 2;
+    this.groundMesh.position.y = ped ? -PIT_DEPTH : 0;
+    this.gridMesh.position.y = (ped ? -PIT_DEPTH : 0) + 0.001;
     const gw = opts.gateWidth || 0;
     for (const m of [this.passage, this.centeringMesh]) {
       m.scale.set(gw, GATE_HEIGHT, GATE_DEPTH);

@@ -15,7 +15,40 @@
 //   profile  - max horizontal radius of the structure's stone corners in PROFILE_BANDS height bands,
 //              from the centre of its base; a cone has radii shrinking upwards.
 
-import { rotatePoint, stoneTop, GATE_HEIGHT, GATE_DEPTH } from './physics.js';
+import { rotatePoint, stoneTop, levelAngle, GATE_HEIGHT, GATE_DEPTH } from './physics.js';
+
+
+// Pedestal mode (opts.pedestal): score = reach - the largest horizontal distance from the centre of a corner of
+// a stone held up by the pedestal: connected to it through contacts of stones that all stay above its top
+// (centre higher than -HELD_BELOW). Stones in the pit - even a heap leaning on the pedestal, whose upper stones
+// touch neither the floor nor anything but rubble - reach nothing. Every stone pushed a little further out
+// counts, so the signal is smooth - unlike "spans or not".
+export const HELD_BELOW = 0.1;
+function reach(trial, corners) {
+  const [pedestal] = trial.grounds;
+  const index = new Map(trial.items.map((it, i) => [it.collider.handle, i]));
+  const held = new Array(trial.items.length).fill(false);
+  const stack = [];
+  const visit = (c1, c2) => {
+    const i = index.get(c2.handle);
+    if (i === undefined || held[i] || trial.items[i].body.translation().y < -HELD_BELOW) return;
+    let touching = false;
+    trial.world.contactPair(c1, c2, (m) => { if (m.numContacts() > 0) touching = true; });
+    if (!touching) return;
+    held[i] = true;
+    stack.push(c2);
+  };
+  trial.world.contactPairsWith(pedestal, (c) => visit(pedestal, c));
+  while (stack.length) {
+    const c1 = stack.pop();
+    trial.world.contactPairsWith(c1, (c2) => visit(c1, c2));
+  }
+  let best = 0;
+  corners.forEach((cs, i) => {
+    if (held[i]) for (const c of cs) best = Math.max(best, Math.hypot(c[0], c[2]));
+  });
+  return best;
+}
 
 export const GATE_BLOCK_PENALTY = 0.8;   // score factor per stone left inside the passage (0.5 was too harsh:
                                          // one stray stone halved the score and evolution could not feel its way)
@@ -25,18 +58,32 @@ export const GATE_BLOCK_PENALTY = 0.8;   // score factor per stone left inside t
 // stone left inside the passage costs 20 % of the score - a heap that fills the passage is no bridge.
 // Returns {above, blocked}.
 // With a round centering (arch) the passage is the half-disc under it, not a box GATE_HEIGHT high.
-function gateMeasure(corners, width, arch) {
-  const r = width / 2 - 0.01;
-  const inside = (c) => (arch ? c[1] > 0 && Math.hypot(c[0], c[1]) < r
-    : Math.abs(c[0]) < r && c[1] < GATE_HEIGHT - 0.01) && Math.abs(c[2]) < GATE_DEPTH / 2;
-  let above = 0;
+// "Inside" is a true intersection of the stone with the passage volume: checking corners only let a 30 cm
+// stone jammed across a 30 cm passage count as outside (all its corners were beyond the walls).
+function gateMeasure(trial, corners, width, arch) {
+  const R = trial.R;
+  // Slack: 2 cm at the walls, 3 cm under the roof - a lintel laid on the centering at GATE_HEIGHT sinks
+  // a cm or two when the scaffolding goes, and that is no stone in the passage.
+  const r = width / 2 - 0.02;
+  const index = new Map(trial.items.map((it, i) => [it.collider.handle, i]));
+  const top = GATE_HEIGHT - 0.03;
+  const [shape, pos, rot] = arch
+    ? [new R.Cylinder(GATE_DEPTH / 2, r), { x: 0, y: 0, z: 0 }, { x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 }]
+    : [new R.Cuboid(r, (top - 0.005) / 2, GATE_DEPTH / 2), { x: 0, y: (top + 0.005) / 2, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }];
   let blocked = 0;
+  // The world has been stepped since the last change, so its scene queries are up to date.
+  trial.world.intersectionsWithShape(pos, rot, shape, (c) => {
+    if (index.has(c.handle)) blocked++;   // a stone (not the ground)
+    return true;
+  });
+  let above = 0;
   for (const cs of corners) {
     let xmin = Infinity, xmax = -Infinity;
     for (const c of cs) { xmin = Math.min(xmin, c[0]); xmax = Math.max(xmax, c[0]); }
-    if (xmin < 0 && xmax > 0) above = Math.max(above, Math.max(...cs.map((c) => c[1])));
-    // Inside: a corner within the passage (1 cm of slack at its walls and roof).
-    if (cs.some(inside)) blocked++;
+    // Over the passage: across its centre line and within its depth (a stone beyond its end spans nothing).
+    if (xmin < 0 && xmax > 0 && cs.some((c) => Math.abs(c[2]) < GATE_DEPTH / 2)) {
+      above = Math.max(above, Math.max(...cs.map((c) => c[1])));
+    }
   }
   return { above, blocked };
 }
@@ -45,12 +92,7 @@ export const FALL_DROP = 0.05;
 export const HANG_GAP = 0.05;
 export const PROFILE_BANDS = 5;
 export const LEVEL_DEG = 3;
-const LEVEL_COS = Math.cos(LEVEL_DEG * Math.PI / 180);
-
-function isLevel(it) {
-  const q = it.body.rotation();
-  return [[1, 0, 0], [0, 1, 0], [0, 0, 1]].some((a) => Math.abs(rotatePoint(q, ...a)[1]) > LEVEL_COS);
-}
+const isLevel = (it) => levelAngle(it.body.rotation()) <= LEVEL_DEG;
 
 function worldCorners(it) {
   const pos = it.body.translation();
@@ -113,15 +155,17 @@ export function measureStructure(trial) {
   let score = height;
   let gate = null;
   if (trial.opts.gateWidth) {
-    gate = gateMeasure(corners, trial.opts.gateWidth, trial.opts.gateArch);
+    gate = gateMeasure(trial, corners, trial.opts.gateWidth, trial.opts.gateArch);
     score = gate.above * GATE_BLOCK_PENALTY ** gate.blocked;
   }
   if (trial.opts.pile) score *= share;
+  const reached = trial.opts.pedestal ? reach(trial, corners) : undefined;
+  if (trial.opts.pedestal) score = reached;
   return {
     score,
     gateAbove: gate ? gate.above : undefined,
     gateBlocked: gate ? gate.blocked : undefined,
-    height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
+    reach: reached, height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
   };
 }
 

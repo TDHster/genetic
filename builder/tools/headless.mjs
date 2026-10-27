@@ -3,9 +3,9 @@
 // Environment: TILT (degrees of the tilt test, default 5; 0 = no tilt test), STONES (default 100),
 // GATE (m: width of a passage under the structure, default 0), ARCH (1: round centering), MIRROR (1/0, default 1: mirror symmetry), GROW (1/0, default 1: the passage widens from 15 cm up to GATE), PILE (1/0, default 1: score = height x share of stones in the structure), NOEND (1/0, default 1:
 // no stones on their ends), STEPS (1: the quarry starts with 15 stones and doubles up to STONES when the best
-// stagnates; needs MIRROR=0), TIME (seconds: stop after this long),
+// stagnates; needs MIRROR=0), REGULAR (1: perfect bricks, no wedges), GENOME (tree: stones laid relative to each other, js/tree-genome.js), PEDESTAL (m, half-size: build on a pedestal over a pit, score = reach), TIME (seconds: stop after this long),
 // SEED (comma-separated structure JSON files, e.g. from tools/diagnose.mjs OUT=: the pool starts with them),
-// OUT (file for the best structure JSON, rewritten at every report; it can be loaded on the page with
+// OUT (file for the best structure JSON, rewritten at every report; with a growing passage also OUT-<cm>cm.json for each cleared width; it can be loaded on the page with
 // "Загрузить постройку"), MAP (file for all elites of the map of finds, written at the end).
 // The result depends on the thread count (it is the batch size), so compare runs with equal threads.
 
@@ -29,6 +29,9 @@ const gateArch = process.env.ARCH === '1';          // round centering (a half-c
 const mirror = (process.env.MIRROR ?? '1') !== '0';  // mirror symmetry across x = 0
 const gateGrow = (process.env.GROW ?? '1') !== '0';  // the passage starts narrow and widens up to GATE
 const growStones = process.env.STEPS === '1';        // the quarry starts small and grows up to STONES
+const pedestal = Number(process.env.PEDESTAL ?? 0);  // m: pedestal over a pit, score = reach
+const genome = process.env.GENOME ?? 'direct';       // tree: stones laid relative to each other
+const regular = process.env.REGULAR === '1';         // perfect bricks
 
 const workerUrl = new URL('./node-worker.mjs', import.meta.url);
 const pool = new WorkerPool(() => {
@@ -49,7 +52,7 @@ const seedGenomes = (process.env.SEED ? process.env.SEED.split(',') : []).map((f
 });
 
 const evo = new Evolution({ seed, poolSize, stoneCount, scaffold, tiltDeg, pile, noEnd, gateWidth, gateArch, mirror, gateGrow,
-  maxGenerations: generations, seedGenomes, growStones });
+  maxGenerations: generations, seedGenomes, growStones, pedestal, genome, regular });
 // SIM='{"fixedPhase":3}' overrides simulation settings in the workers (see SIM in js/physics.js).
 await pool.init({ ...evo.evalConfig(), sim: JSON.parse(process.env.SIM ?? '{}') });
 const evaluateAll = (genomes, thresholds) => pool.evaluateAll(genomes, thresholds);
@@ -63,6 +66,7 @@ function report() {
   console.log(`gen ${String(h.generation).padStart(4)}  best ${fmt(b.score)} (${fmt(b.height)} m × ${fmt(b.share)})`
     + (evo.gateNow ? `  passage ${(100 * evo.gateNow).toFixed(0)} cm: over ${fmt(b.gateAbove)} m, inside ${b.gateBlocked}` : '')
     + (growStones ? `  quarry ${evo.stonesNow}` : '')
+    + (pedestal ? `  reach ${fmt(b.reach)} m` : '')
     + `  median ${fmt(h.median)}  map ${evo.archive.size} cells`
     + `  stones ${b.stones}  level ${(100 * b.level).toFixed(0)}%  hanging ${b.hanging}  fallen ${b.fallen}`
     + `  profile ${b.profile.map((r) => r.toFixed(2)).join('/')}`
@@ -72,7 +76,7 @@ function report() {
 }
 
 console.log(`seed ${seed}, pool ${poolSize}, ${scaffold ? 'scaffold' : 'free (no scaffold)'}, tilt ${tiltDeg}°, `
-  + `${growStones ? `${evo.stonesNow} -> ` : ''}${stoneCount} stones, ${pile ? 'whole pile' : 'height only'}, ${noEnd ? 'no stones on end' : 'any side'}, ${mirror ? 'mirrored' : 'no symmetry'}, `
+  + `${growStones ? `${evo.stonesNow} -> ` : ''}${stoneCount} stones, ${pile ? 'whole pile' : 'height only'}, ${noEnd ? 'no stones on end' : 'any side'}, ${pedestal ? `pedestal ±${pedestal} m (reach), ` : ''}${genome === 'tree' ? 'tree genome, ' : ''}${regular ? 'perfect bricks, ' : ''}${mirror ? 'mirrored' : 'no symmetry'}, `
   + `${gateWidth ? `passage ${gateWidth} m${gateArch ? ' (round centering)' : ''}, ` : ''}${threads} threads`);
 await evo.init(evaluateAll);
 report();
@@ -81,6 +85,11 @@ const timeLimit = Number(process.env.TIME ?? 0) * 1000;
 while (!evo.stopReason() && !(timeLimit && performance.now() - t0 > timeLimit)) {
   await evo.step(evaluateAll, batch);
   if (evo.gateReady()) {
+    // The best that cleared this width is about to be rescored for a wider passage: keep it.
+    if (process.env.OUT) {
+      writeFileSync(process.env.OUT.replace(/\.json$/, '') + `-${Math.round(100 * evo.gateNow)}cm.json`,
+        JSON.stringify(evo.exportBest(), null, 1));
+    }
     const w = evo.widenGate();
     await pool.init({ ...evo.evalConfig(), sim: JSON.parse(process.env.SIM ?? '{}') });
     await evo.rescore(evaluateAll);

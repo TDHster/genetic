@@ -17,9 +17,9 @@ export function initRapier() {
 export async function makeEvaluator(cfg) {
   const R = await initRapier();
   if (cfg.sim) Object.assign(SIM, cfg.sim);
-  const quarry = makeQuarry(cfg.stoneCount, cfg.seed);
+  const quarry = makeQuarry(cfg.stoneCount, cfg.seed, cfg.regular);
   const opts = { scaffold: cfg.scaffold, tiltDeg: cfg.tiltDeg, pile: cfg.pile, gateWidth: cfg.gateWidth, gateArch: cfg.gateArch,
-    mirror: cfg.mirror };
+    mirror: cfg.mirror, pedestal: cfg.pedestal };
   return (genome, abortBelow) => evaluateGenome(R, quarry, genome, { ...opts, abortBelow });
 }
 

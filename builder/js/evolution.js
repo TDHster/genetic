@@ -29,7 +29,8 @@
 
 import { makeRng } from './rng.js';
 import { makeQuarry } from './stones.js';
-import { randomGenome, crossover, mutate, cloneGenome } from './genome.js';
+import * as directGenome from './genome.js';
+import * as treeGenome from './tree-genome.js';
 import { GATE_HEIGHT } from './physics.js';
 
 // GROWING PASSAGE (cfg.gateGrow). A portal or a vault over a wide passage is several parts that must come
@@ -74,10 +75,14 @@ export function batchSize(poolSize, workers) {
 
 export class Evolution {
   // cfg: {seed, poolSize, stoneCount, scaffold, tiltDeg, pile, noEnd, gateWidth (0 = no gate), gateArch, mirror,
-  //       maxGenerations?, stagnation?, seedGenomes? (start the pool with these)}
+  //       maxGenerations?, stagnation?, seedGenomes? (start the pool with these),
+  //       pedestal? (half-size, m: build on a pedestal over a pit, score = reach), genome? ('tree' - tree-genome.js),
+  //       regular? (perfect bricks, see stones.js)}
   constructor(cfg) {
     this.cfg = cfg;
-    this.rules = { noEnd: !!cfg.noEnd };
+    this.rules = { noEnd: !!cfg.noEnd, regular: !!cfg.regular };
+    // The genome: stone by stone (genome.js) or a tree of stones laid relative to each other (tree-genome.js).
+    this.G = cfg.genome === 'tree' ? treeGenome : directGenome;
     // With mirror symmetry the genome plans only the first half of the quarry (see buildPlan in physics.js).
     if (cfg.growStones && cfg.mirror) throw new Error('growing quarry does not work with mirror symmetry');
     // Stones in the quarry now: grows from STONES_START to cfg.stoneCount (see the header), or fixed.
@@ -86,7 +91,7 @@ export class Evolution {
     // The passage width now: grows from GATE_START to cfg.gateWidth (see the header), or fixed.
     this.gateNow = cfg.gateWidth && cfg.gateGrow ? Math.min(GATE_START, cfg.gateWidth) : cfg.gateWidth || 0;
     this.rng = makeRng(cfg.seed);
-    this.quarry = makeQuarry(cfg.stoneCount, cfg.seed);
+    this.quarry = makeQuarry(cfg.stoneCount, cfg.seed, !!cfg.regular);
     this.matings = 0;
     this.pool = [];      // [{genome, result, id, born}]
     this.nextId = 1;
@@ -101,9 +106,10 @@ export class Evolution {
 
   // The settings a worker needs to score genomes exactly like the others.
   evalConfig() {
-    const { seed, scaffold, tiltDeg, pile, gateArch, mirror } = this.cfg;
+    const { seed, scaffold, tiltDeg, pile, gateArch, mirror, pedestal, regular } = this.cfg;
     return { seed, stoneCount: this.stonesNow, scaffold, tiltDeg, pile: !!pile, gateWidth: this.gateNow, gateArch: !!gateArch,
-      mirror: !!mirror };
+      mirror: !!mirror, pedestal: pedestal || 0,
+      regular: !!regular };
   }
 
   get generation() { return this.matings / this.cfg.poolSize; }
@@ -114,8 +120,8 @@ export class Evolution {
   // evaluateAll: (genomes, abortBelow thresholds or undefined) -> Promise<results>
   async init(evaluateAll) {
     // cfg.seedGenomes: hand-made structures to start from (an experiment: does a pyramid survive evolution?).
-    const genomes = (this.cfg.seedGenomes || []).slice(0, this.cfg.poolSize).map(cloneGenome);
-    while (genomes.length < this.cfg.poolSize) genomes.push(randomGenome(this.rng, this.genomeStones, this.rules));
+    const genomes = (this.cfg.seedGenomes || []).slice(0, this.cfg.poolSize).map(this.G.cloneGenome);
+    while (genomes.length < this.cfg.poolSize) genomes.push(this.G.randomGenome(this.rng, this.genomeStones, this.rules));
     const results = await evaluateAll(genomes);
     this.pool = genomes.map((genome, i) => this.individual(genome, results[i]));
     for (const ind of this.pool) { this.consider(ind); this.offer(ind); }
@@ -154,11 +160,13 @@ export class Evolution {
       pb = elites[this.rng.int(elites.length)];
       fromMap = true;
     }
-    const genome = crossover(this.rng, pa.genome, pb.genome, this.genomeStones);
-    const kind = mutate(this.rng, genome, this.genomeStones, this.rules);
+    const genome = this.G.crossover(this.rng, pa.genome, pb.genome, this.genomeStones, this.rules);
+    const kind = this.G.mutate(this.rng, genome, this.genomeStones, this.rules);
     this.mutationCounts[kind] = (this.mutationCounts[kind] || 0) + 1;
     const threshold = this.pool[worst].result.score;
-    return { genome, target: worst, threshold, abortBelow: fromMap ? undefined : threshold };
+    // No early stop when the score is not a height (reach): the top cannot be compared with it.
+    const abortBelow = fromMap || this.cfg.pedestal ? undefined : threshold;
+    return { genome, target: worst, threshold, abortBelow };
   }
 
   // The scored child replaces the worst of its triple if it is not worse.
@@ -290,9 +298,11 @@ export class Evolution {
       gateWidth: this.gateNow,
       gateArch: !!this.cfg.gateArch,
       mirror: !!this.cfg.mirror,
+      pedestal: this.cfg.pedestal || 0,
+      regular: !!this.cfg.regular,
       generation: Math.floor(ind.born),
       result: ind.result,
-      genome: cloneGenome(ind.genome),
+      genome: this.G.cloneGenome(ind.genome),
     };
   }
 }
