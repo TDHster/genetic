@@ -8,7 +8,10 @@
 //   dv     - shift across it, in halves of a stone width (-2..2: +-2 = side by side);
 //   turn   - 0 or 1: turned by 90° to the parent (a header across a stretcher);
 //   axis   - 1 = on edge, 2 = flat (never on end);
-//   up     - stacking mode only (physics.js): 1 = set on the parent's top face, 0 = beside it on the same bed.
+//   up     - stacking mode only (physics.js): 1 = set on the parent's top face, 0 = beside it on the same bed;
+//   rot    - stacking mode only: the turn to the parent in steps of ROT_STEP degrees (-6..6 = -90..90°) instead
+//            of turn - curved walls, spirals, round towers, corbelled rings. Genes without it (saved earlier)
+//            keep turn. turnAngle(g) gives the angle either way.
 // The position is computed from the parent's PLANNED place, not from where physics put it, so a mutation
 // of one gene moves its whole branch along. Stone i of the quarry goes to gene i. The stone is then lowered
 // from above as usual (physics.js): "on top" or "beside" follows from where it lands.
@@ -25,6 +28,9 @@ import { BASE_SIZE } from './stones.js';
 // with perfect bricks (rules.regular) 1 %, with the small error of stacking mode (rules.stack, +-2 %) 3 %.
 const pitch = (rules) => (rules.regular ? 1.01 : rules.stack ? 1.03 : 1.1);
 
+export const ROT_STEP = 15;
+export const turnAngle = (g) => (g.rot !== undefined ? ROT_STEP * g.rot : 90 * g.turn);
+
 // The placement of a child gene laid against a parent at frame {x, z, yaw, axis} - the parent's planned place
 // (decode) or, in stacking mode, where the parent really lies (physics.js).
 export function placeFrom(g, frame, rules = {}) {
@@ -37,7 +43,7 @@ export function placeFrom(g, frame, rules = {}) {
   return {
     x: frame.x + u * Math.cos(a) + v * Math.sin(a),
     z: frame.z - u * Math.sin(a) + v * Math.cos(a),
-    yaw: ((frame.yaw + 90 * g.turn) % 360 + 360) % 360,
+    yaw: ((frame.yaw + turnAngle(g)) % 360 + 360) % 360,
     axis: g.axis,
     tiltDir: 0,
     tilt: 0,
@@ -55,8 +61,12 @@ function randomChild(rng, parent, rules = {}) {
     turn: rng.int(2),
     axis: 1 + rng.int(2),
   };
-  // Stacking mode only (so other runs keep their random draws): on top of the parent or beside it.
-  if (rules.stack) g.up = rng.chance(0.7) ? 1 : 0;
+  // Stacking mode only (so other runs keep their random draws): on top of the parent or beside it, and the turn
+  // in 15° steps - half of the stones square to the parent (0 or 90°), half at any step.
+  if (rules.stack) {
+    g.up = rng.chance(0.7) ? 1 : 0;
+    g.rot = rng.chance(0.5) ? 6 * rng.int(2) : rng.intRange(-6, 6);
+  }
   return g;
 }
 
@@ -130,8 +140,11 @@ export function mutate(rng, g, stoneCount, rules = {}) {
       break;
     case 'turn':
       // Stacking mode: half of these flip "on top" / "beside" instead.
-      if (rules.stack && rng.chance(0.5)) x.up = x.up === 0 ? 1 : 0;
-      else x.turn = 1 - x.turn;
+      if (rules.stack && rng.chance(0.4)) x.up = x.up === 0 ? 1 : 0;
+      else if (rules.stack && x.rot !== undefined) {
+        // Mostly a 15° step, sometimes back to square.
+        x.rot = rng.chance(0.75) ? clamp(x.rot + (rng.chance(0.5) ? 1 : -1), -6, 6) : 6 * rng.int(2);
+      } else x.turn = 1 - x.turn;
       break;
     case 'axis': x.axis = x.axis === 1 ? 2 : 1; break;
     case 'parent': x.parent = rng.int(i); break;

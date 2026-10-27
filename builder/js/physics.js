@@ -66,6 +66,7 @@
 // so both see exactly the same simulation (Rapier is deterministic).
 
 import { DENSITY, BASE_SIZE } from './stones.js';
+import { turnAngle } from './tree-genome.js';
 import { measureStructure, COLLAPSE_SHIFT } from './fitness.js';
 
 // Simulation settings; times are in seconds, so the step `dt` can change without changing the test.
@@ -484,7 +485,7 @@ export class Trial {
     const v = g.dv * (pa === 1 ? BASE_SIZE_HEIGHT : BASE_SIZE_WIDTH) * k / 2;
     const y = g.up === 0 ? (hc - hp) / 2 + GAP : (hp + hc) / 2 + GAP;
     const off = rotatePoint(level, u, y, v);
-    const rot = quatMul(level, quatMul(quatAxisAngle(0, 1, 0, 90 * g.turn), BASE[g.axis]));
+    const rot = quatMul(level, quatMul(quatAxisAngle(0, 1, 0, turnAngle(g)), BASE[g.axis]));
     const pos = { x: s * pp.x + off[0], y: pp.y + off[1], z: pp.z + off[2] };
     return p.mirror ? { pos: { x: -pos.x, y: pos.y, z: pos.z }, rot: reflect(rot) } : { pos, rot };
   }
