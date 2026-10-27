@@ -5,7 +5,8 @@
 // no stones on their ends), STEPS (1: the quarry starts with 15 stones and doubles up to STONES when the best
 // stagnates; needs MIRROR=0), STACK (1: stacking mode - laid against the real parent, nearly regular stones,
 // collapse costs; implies GENOME=tree; at the end the best is also checked with a 5° tilt), SPANCAP (1, with GATE:
-// height over the passage counts only up to 0.5 m - the way up is a clean, then a wider span), REGULAR (1: perfect bricks, no wedges), GENOME (tree: stones laid relative to each other, js/tree-genome.js), PEDESTAL (m, half-size: build on a pedestal over a pit, score = reach), TIME (seconds: stop after this long),
+// height over the passage counts only up to 0.5 m - the way up is a clean, then a wider span), WALL (1: score =
+// wall area of any shape, see js/fitness.js), REGULAR (1: perfect bricks, no wedges), GENOME (tree: stones laid relative to each other, js/tree-genome.js), PEDESTAL (m, half-size: build on a pedestal over a pit, score = reach), TIME (seconds: stop after this long),
 // SEED (comma-separated structure JSON files, e.g. from tools/diagnose.mjs OUT=: the pool starts with them),
 // OUT (file for the best structure JSON, rewritten at every report; with a growing passage also OUT-<cm>cm.json for each cleared width; it can be loaded on the page with
 // "Загрузить постройку"), MAP (file for all elites of the map of finds, written at the end).
@@ -36,6 +37,7 @@ const genome = process.env.GENOME ?? 'direct';       // tree: stones laid relati
 const regular = process.env.REGULAR === '1';         // perfect bricks
 const stack = process.env.STACK === '1';             // stacking mode (see js/physics.js)
 const spanCap = process.env.SPANCAP === '1';         // with GATE: height over the passage counts up to 0.5 m
+const wall = process.env.WALL === '1';               // score = wall area of any shape
 
 const workerUrl = new URL('./node-worker.mjs', import.meta.url);
 const pool = new WorkerPool(() => {
@@ -56,7 +58,7 @@ const seedGenomes = (process.env.SEED ? process.env.SEED.split(',') : []).map((f
 });
 
 const evo = new Evolution({ seed, poolSize, stoneCount, scaffold, tiltDeg, pile, noEnd, gateWidth, gateArch, mirror, gateGrow,
-  maxGenerations: generations, seedGenomes, growStones, pedestal, genome, regular, stack, spanCap });
+  maxGenerations: generations, seedGenomes, growStones, pedestal, genome, regular, stack, spanCap, wall });
 // SIM='{"fixedPhase":3}' overrides simulation settings in the workers (see SIM in js/physics.js).
 await pool.init({ ...evo.evalConfig(), sim: JSON.parse(process.env.SIM ?? '{}') });
 const evaluateAll = (genomes, thresholds) => pool.evaluateAll(genomes, thresholds);
@@ -72,6 +74,8 @@ function report() {
     + (growStones ? `  quarry ${evo.stonesNow}` : '')
     + (pedestal ? `  reach ${fmt(b.reach)} m` : '')
     + (stack ? `  standing ${(100 * b.standing).toFixed(0)}%` : '')
+    + (wall ? `  wall ${fmt(b.wallArea)} m² length/height ${b.wallRatio.toFixed(2)}` : '')
+    + `  bond ${(100 * (b.bond ?? 0)).toFixed(0)}%`
     + `  median ${fmt(h.median)}  map ${evo.archive.size} cells`
     + `  stones ${b.stones}  level ${(100 * b.level).toFixed(0)}%  hanging ${b.hanging}  fallen ${b.fallen}`
     + `  profile ${b.profile.map((r) => r.toFixed(2)).join('/')}`
@@ -81,7 +85,7 @@ function report() {
 }
 
 console.log(`seed ${seed}, pool ${poolSize}, ${scaffold ? 'scaffold' : 'free (no scaffold)'}, tilt ${tiltDeg}°, `
-  + `${growStones ? `${evo.stonesNow} -> ` : ''}${stoneCount} stones, ${pile ? 'whole pile' : 'height only'}, ${noEnd ? 'no stones on end' : 'any side'}, ${pedestal ? `pedestal ±${pedestal} m (reach), ` : ''}${genome === 'tree' ? 'tree genome, ' : ''}${regular ? 'perfect bricks, ' : ''}${stack ? 'stacking, ' : ''}${spanCap ? 'span cap, ' : ''}${mirror ? 'mirrored' : 'no symmetry'}, `
+  + `${growStones ? `${evo.stonesNow} -> ` : ''}${stoneCount} stones, ${pile ? 'whole pile' : 'height only'}, ${noEnd ? 'no stones on end' : 'any side'}, ${pedestal ? `pedestal ±${pedestal} m (reach), ` : ''}${genome === 'tree' ? 'tree genome, ' : ''}${regular ? 'perfect bricks, ' : ''}${stack ? 'stacking, ' : ''}${spanCap ? 'span cap, ' : ''}${wall ? 'wall area, ' : ''}${mirror ? 'mirrored' : 'no symmetry'}, `
   + `${gateWidth ? `passage ${gateWidth} m${gateArch ? ' (round centering)' : ''}, ` : ''}${threads} threads`);
 await evo.init(evaluateAll);
 report();

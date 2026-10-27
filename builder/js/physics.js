@@ -65,8 +65,8 @@
 // The trial is a generator: evolution runs it to the end at once, the 3D view runs it step by step,
 // so both see exactly the same simulation (Rapier is deterministic).
 
-import { DENSITY, BASE_SIZE } from './stones.js';
-import { turnAngle } from './tree-genome.js';
+import { DENSITY } from './stones.js';
+import { turnAngle, footprint } from './tree-genome.js';
 import { measureStructure, COLLAPSE_SHIFT } from './fitness.js';
 
 // Simulation settings; times are in seconds, so the step `dt` can change without changing the test.
@@ -107,7 +107,6 @@ export const G = 9.81;
 export const GATE_HEIGHT = 0.3;
 export const GATE_DEPTH = 4;      // along z: through the whole building site
 export const PIT_DEPTH = 1.5;     // pedestal mode: depth of the pit around the pedestal
-const [BASE_SIZE_LENGTH, BASE_SIZE_WIDTH, BASE_SIZE_HEIGHT] = BASE_SIZE;
 const ABORT_MARGIN = 0.01;
 const ABORT_EVERY = 10;
 const GRID = 0.5;           // m: cell of the grid of placed stones
@@ -192,6 +191,7 @@ export class Trial {
   //        gateArch?: bool (round centering), mirror?: bool (symmetry, see the header),
   //        pedestal?: number (half-size of the pedestal, m; 0 = ground everywhere, see the header),
   //        stack?: bool (stacking mode, see the header; needs genome.genes), regular?: bool (perfect bricks),
+  //        wall?: bool (score = wall area, fitness.js),
   //        calmMin?: number (s, defaults to SIM.calmMin; longer = stricter, for checks),
   //        abortBelow?: number - stop as soon as the top is clearly below this score (see below)}
   constructor(R, quarry, genome, opts) {
@@ -474,15 +474,16 @@ export class Trial {
     const pp = parent.body.translation();
     const pr = p.mirror ? reflect(parent.body.rotation()) : parent.body.rotation();
     const pa = parent.placement.axis;
-    // The parent's level frame: its turn without the base turn that set it flat or on edge.
+    // The parent's level frame: its turn without the base turn that set it flat, on edge or on end.
     const base = BASE[pa];
     const level = quatMul(pr, { x: -base.x, y: -base.y, z: -base.z, w: base.w });
-    const height = (stone, axis) => (axis === 1 ? stone.size[1] : stone.size[2]);
+    const height = (stone, axis) => stone.size[axis === 0 ? 0 : axis === 1 ? 1 : 2];
     const stone = this.quarry[p.stone];
     const hp = height(parent.stone, pa), hc = height(stone, g.axis);
     const k = this.opts.regular ? 1.01 : 1.03;   // the pitch of tree-genome.js
-    const u = g.du * BASE_SIZE_LENGTH * k / 4;
-    const v = g.dv * (pa === 1 ? BASE_SIZE_HEIGHT : BASE_SIZE_WIDTH) * k / 2;
+    const [along, across] = footprint(pa);
+    const u = g.du * along * k / 4;
+    const v = g.dv * across * k / 2;
     const y = g.up === 0 ? (hc - hp) / 2 + GAP : (hp + hc) / 2 + GAP;
     const off = rotatePoint(level, u, y, v);
     const rot = quatMul(level, quatMul(quatAxisAngle(0, 1, 0, turnAngle(g)), BASE[g.axis]));

@@ -49,6 +49,7 @@ function readConfig() {
     pedestal: $('cfg-pedestal').checked ? 0.2 : 0,
     regular: $('cfg-regular').checked,
     stack: $('cfg-stack').checked,
+    wall: $('cfg-wall').checked,
     gateGrow: $('cfg-gate-grow').checked,
   };
 }
@@ -203,7 +204,11 @@ function describe(result, born, replayHeight) {
   }
   const gatePart = result.gateAbove !== undefined
     ? `высота над проходом × 0,8<sup>${result.gateBlocked}</sup>` : 'высота';
-  const score = result.reach !== undefined
+  const score = result.wallArea !== undefined
+    ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = площадь стены ${result.wallArea.toFixed(2)} м²`
+      + ` (развёртка / высота ${result.wallRatio.toFixed(2)})`
+      + `${result.share !== undefined && Math.abs(result.share - 1) > 1e-9 ? ` × доля кучи ${(100 * result.share).toFixed(0)} %` : ''}</td></tr>`
+    : result.reach !== undefined
     ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = вынос от центра пьедестала, м</td></tr>`
     : result.share !== undefined && Math.abs(result.score - result.height) > 1e-9
       ? `<tr><th>Оценка</th><td><b>${result.score.toFixed(3)}</b> = ${gatePart} × доля кучи ${(100 * result.share).toFixed(0)} %</td></tr>`
@@ -215,6 +220,7 @@ function describe(result, born, replayHeight) {
     ${score}
     <tr><th>Камней в плане / в постройке</th><td>${result.stones} / ${result.structure}</td></tr>
     <tr><th>Упало при испытании</th><td>${result.fallen}</td></tr>
+    ${result.bond !== undefined ? `<tr><th>Перевязка</th><td>${(100 * result.bond).toFixed(0)} % камней лежат на двух и более</td></tr>` : ''}
     ${result.standing !== undefined ? `<tr><th>Устояло (оценка × доля)</th><td>${(100 * result.standing).toFixed(0)} %</td></tr>` : ''}
     <tr><th>Висячих (пролёты)</th><td>${result.hanging}</td></tr>
     <tr><th>Основание / верх (радиус)</th><td>${taper}</td></tr>
@@ -234,7 +240,7 @@ function showIndividual(ind, title) {
   showInfo(ind.result, ind.born);
   const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg, pile: evo.cfg.pile, gateWidth: evo.gateNow,
     gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror,     pedestal: evo.cfg.pedestal || 0,
-    regular: !!evo.cfg.regular, stack: !!evo.cfg.stack, spanCap: !!evo.cfg.spanCap };
+    regular: !!evo.cfg.regular, stack: !!evo.cfg.stack, spanCap: !!evo.cfg.spanCap, wall: !!evo.cfg.wall };
   view.show(evo.quarry, ind.genome, opts, ind.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(ind.result, ind.born, r.height);
@@ -266,7 +272,7 @@ function redrawMap() {
 function optsOf(data) {
   return { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0,
     gateArch: !!data.gateArch, mirror: !!data.mirror, pedestal: data.pedestal || 0, regular: !!data.regular,
-    stack: !!data.stack, spanCap: !!data.spanCap };
+    stack: !!data.stack, spanCap: !!data.spanCap, wall: !!data.wall };
 }
 const quarryOf = (data) => makeQuarry(data.stoneCount, data.seed, quarryError(data));
 

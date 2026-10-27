@@ -19,7 +19,7 @@ export async function makeEvaluator(cfg) {
   if (cfg.sim) Object.assign(SIM, cfg.sim);
   const quarry = makeQuarry(cfg.stoneCount, cfg.seed, quarryError(cfg));
   const opts = { scaffold: cfg.scaffold, tiltDeg: cfg.tiltDeg, pile: cfg.pile, gateWidth: cfg.gateWidth, gateArch: cfg.gateArch,
-    mirror: cfg.mirror, spanCap: cfg.spanCap, stack: cfg.stack, regular: cfg.regular, pedestal: cfg.pedestal };
+    mirror: cfg.mirror, spanCap: cfg.spanCap, wall: cfg.wall, stack: cfg.stack, regular: cfg.regular, pedestal: cfg.pedestal };
   return (genome, abortBelow) => evaluateGenome(R, quarry, genome, { ...opts, abortBelow });
 }
 

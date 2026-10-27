@@ -78,7 +78,8 @@ export class Evolution {
   //       maxGenerations?, stagnation?, seedGenomes? (start the pool with these),
   //       pedestal? (half-size, m: build on a pedestal over a pit, score = reach), genome? ('tree' - tree-genome.js),
   //       regular? (perfect bricks, see stones.js), stack? (stacking mode, physics.js; implies the tree genome),
-  //       spanCap? (height over the passage counts up to SPAN_CAP, fitness.js)}
+  //       spanCap? (height over the passage counts up to SPAN_CAP, fitness.js),
+  //       wall? (score = wall area, fitness.js)}
   constructor(cfg) {
     this.cfg = cfg;
     this.rules = { noEnd: !!cfg.noEnd, regular: !!cfg.regular, stack: !!cfg.stack };
@@ -108,10 +109,10 @@ export class Evolution {
 
   // The settings a worker needs to score genomes exactly like the others.
   evalConfig() {
-    const { seed, scaffold, tiltDeg, pile, gateArch, mirror, pedestal, regular, stack, spanCap } = this.cfg;
+    const { seed, scaffold, tiltDeg, pile, gateArch, mirror, pedestal, regular, stack, spanCap, wall } = this.cfg;
     return { seed, stoneCount: this.stonesNow, scaffold, tiltDeg, pile: !!pile, gateWidth: this.gateNow, gateArch: !!gateArch,
       mirror: !!mirror, pedestal: pedestal || 0,
-      regular: !!regular, stack: !!stack, spanCap: !!spanCap };
+      regular: !!regular, stack: !!stack, spanCap: !!spanCap, wall: !!wall };
   }
 
   get generation() { return this.matings / this.cfg.poolSize; }
@@ -166,8 +167,8 @@ export class Evolution {
     const kind = this.G.mutate(this.rng, genome, this.genomeStones, this.rules);
     this.mutationCounts[kind] = (this.mutationCounts[kind] || 0) + 1;
     const threshold = this.pool[worst].result.score;
-    // No early stop when the score is not a height (reach): the top cannot be compared with it.
-    const abortBelow = fromMap || this.cfg.pedestal ? undefined : threshold;
+    // No early stop when the score is not a height (reach, wall area): the top cannot be compared with it.
+    const abortBelow = fromMap || this.cfg.pedestal || this.cfg.wall ? undefined : threshold;
     return { genome, target: worst, threshold, abortBelow };
   }
 
@@ -304,6 +305,7 @@ export class Evolution {
       regular: !!this.cfg.regular,
       stack: !!this.cfg.stack,
       spanCap: !!this.cfg.spanCap,
+      wall: !!this.cfg.wall,
       generation: Math.floor(ind.born),
       result: ind.result,
       genome: this.G.cloneGenome(ind.genome),

@@ -99,6 +99,54 @@ function gateMeasure(trial, corners, width, arch) {
 // where they were laid (more than the joints settle when the scaffolding goes). A structure that almost stands
 // then ranks above one that fell apart, instead of both just being lower.
 export const COLLAPSE_SHIFT = 0.03;
+
+// Wall mode (opts.wall): score = wall area, whatever the wall's shape. Every vertical face of every stone of the
+// structure (connected to the top, not falling) is sampled at WALL_SAMPLES points; a point is open when a ray
+// WALL_RAY long, straight out of the face, hits no stone. The area is half the open part of the faces: a thin wall
+// shows two sides, so half is its unrolled length x height - for a straight wall, a ring or a spiral alike, at any
+// angle. Faces against a neighbour (joints, the inside of a thick wall) do not count; two posts and a lintel show
+// little, a solid wall a lot. No proportion is asked for: evolution finds its own (reported as unrolled
+// length / height = area / height^2).
+// Tried and dropped: cutting the structure into 5 cm cubes and counting their open faces - a stone at 45° became
+// a staircase with 1.4x the faces, so a wall scored more just for being turned; and separate posts in a row showed
+// their side faces too and beat a solid wall of the same stones (hence: only the connected structure counts).
+export const WALL_RAY = 0.1;
+const WALL_SAMPLES = [0.2, 0.5, 0.8];   // fractions along each edge of a face: 3 x 3 points
+function wallMeasure(trial, inStructure) {
+  const R = trial.R;
+  let open = 0, top = 0;
+  trial.items.forEach((it, i) => {
+    if (!inStructure[i] || moving(it)) return;
+    const pos = it.body.translation();
+    const q = it.body.rotation();
+    const h = it.stone.size.map((v) => v / 2);
+    top = Math.max(top, stoneTop(it.stone, pos, q));
+    for (let a = 0; a < 3; a++) {
+      for (const sign of [-1, 1]) {
+        const local = [0, 0, 0];
+        local[a] = sign;
+        const n = rotatePoint(q, ...local);
+        if (Math.abs(n[1]) > 0.5) continue;   // a top or bottom face
+        const [b, c] = [0, 1, 2].filter((k) => k !== a);
+        const area = 4 * h[b] * h[c] / WALL_SAMPLES.length ** 2;
+        for (const fb of WALL_SAMPLES) {
+          for (const fc of WALL_SAMPLES) {
+            const p = [0, 0, 0];
+            p[a] = sign * (h[a] + 0.001);
+            p[b] = (2 * fb - 1) * h[b];
+            p[c] = (2 * fc - 1) * h[c];
+            const w = rotatePoint(q, ...p);
+            const ray = new R.Ray({ x: pos.x + w[0], y: pos.y + w[1], z: pos.z + w[2] }, { x: n[0], y: n[1], z: n[2] });
+            const hit = trial.world.castRay(ray, WALL_RAY, true, undefined, undefined, undefined, it.body);
+            if (!hit) open += area;
+          }
+        }
+      }
+    }
+  });
+  const area = open / 2;
+  return { area, ratio: top > 0 ? area / top / top : 0 };
+}
 // "Until calm" (physics.js) watches only the top of the structure, so at the moment of measuring lower stones may
 // still be falling. A stone faster than MOVING_SPEED counts for nothing: not for reach, not over the passage, and
 // in stacking mode as fallen (a chain of stones dropping through the air once scored a 1.8 m reach).
@@ -181,6 +229,8 @@ export function measureStructure(trial) {
   if (trial.opts.pile) score *= share;
   const reached = trial.opts.pedestal ? reach(trial, corners) : undefined;
   if (trial.opts.pedestal) score = reached;
+  const wall = trial.opts.wall ? wallMeasure(trial, inStructure) : null;
+  if (wall) score = wall.area * (trial.opts.pile ? share : 1);
   let standing;
   if (trial.opts.stack) {
     const moved = items.filter((it) => {
@@ -194,8 +244,35 @@ export function measureStructure(trial) {
     score,
     gateAbove: gate ? gate.above : undefined,
     gateBlocked: gate ? gate.blocked : undefined,
-    reach: reached, standing, height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
+    reach: reached, standing, wallArea: wall ? wall.area : undefined, wallRatio: wall ? wall.ratio : undefined,
+    bond: bondShare(trial),
+    height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
   };
+}
+
+// Bond: the share of stones resting on two or more stones below (among those resting on any) - a running bond
+// lays every brick over a joint, a stack bond on one brick. Metric only (UI, headless).
+function bondShare(trial) {
+  const index = new Map(trial.items.map((it, i) => [it.collider.handle, i]));
+  let resting = 0, bridging = 0;
+  for (const it of trial.items) {
+    const y = it.body.translation().y;
+    let below = 0;
+    trial.world.contactPairsWith(it.collider, (c2) => {
+      const j = index.get(c2.handle);
+      if (j === undefined || trial.items[j].body.translation().y > y - 0.03) return;
+      let touching = false;
+      // A real contact (no gap): Rapier also reports pairs within its prediction distance, so neighbours a
+      // millimetre apart would count as support.
+      trial.world.contactPair(it.collider, c2, (m) => {
+        for (let k = 0; k < m.numContacts(); k++) if (m.contactDist(k) < 0.0005) touching = true;
+      });
+      if (touching) below++;
+    });
+    if (below) resting++;
+    if (below > 1) bridging++;
+  }
+  return resting ? bridging / resting : 0;
 }
 
 // Flood fill over touching stones, starting from the one with the highest corner.

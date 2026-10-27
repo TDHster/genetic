@@ -7,7 +7,7 @@
 //            -2 = half bond, -1 = a corbel of a quarter stone, 0 = right above or beside it);
 //   dv     - shift across it, in halves of a stone width (-2..2: +-2 = side by side);
 //   turn   - 0 or 1: turned by 90° to the parent (a header across a stretcher);
-//   axis   - 1 = on edge, 2 = flat (never on end);
+//   axis   - 1 = on edge, 2 = flat; 0 = on end only when the "no ends" rule is off;
 //   up     - stacking mode only (physics.js): 1 = set on the parent's top face, 0 = beside it on the same bed;
 //   rot    - stacking mode only: the turn to the parent in steps of ROT_STEP degrees (-6..6 = -90..90°) instead
 //            of turn - curved walls, spirals, round towers, corbelled rings. Genes without it (saved earlier)
@@ -28,6 +28,9 @@ import { BASE_SIZE } from './stones.js';
 // with perfect bricks (rules.regular) 1 %, with the small error of stacking mode (rules.stack, +-2 %) 3 %.
 const pitch = (rules) => (rules.regular ? 1.01 : rules.stack ? 1.03 : 1.1);
 
+// The stone's extent along the parent frame's length and across it, by axis (2 flat, 1 on edge, 0 on end).
+export const footprint = (axis) => [axis === 0 ? BASE_SIZE[1] : BASE_SIZE[0], axis === 2 ? BASE_SIZE[1] : BASE_SIZE[2]];
+
 export const ROT_STEP = 15;
 export const turnAngle = (g) => (g.rot !== undefined ? ROT_STEP * g.rot : 90 * g.turn);
 
@@ -36,10 +39,10 @@ export const turnAngle = (g) => (g.rot !== undefined ? ROT_STEP * g.rot : 90 * g
 export function placeFrom(g, frame, rules = {}) {
   const k = pitch(rules);
   const a = frame.yaw * Math.PI / 180;
-  // The stone's length runs along (cos a, -sin a) in (x, z) for yaw a (a turn around +y), its width across;
-  // across, on edge the stone is 10 cm wide.
-  const u = g.du * BASE_SIZE[0] * k / 4;
-  const v = g.dv * (frame.axis === 1 ? BASE_SIZE[2] : BASE_SIZE[1]) * k / 2;
+  // The stone's length runs along (cos a, -sin a) in (x, z) for yaw a (a turn around +y), its width across.
+  const [along, across] = footprint(frame.axis);
+  const u = g.du * along * k / 4;
+  const v = g.dv * across * k / 2;
   return {
     x: frame.x + u * Math.cos(a) + v * Math.sin(a),
     z: frame.z - u * Math.sin(a) + v * Math.cos(a),
@@ -53,13 +56,16 @@ export const MAX_REPEAT = 12;   // genes copied at most by one repeat
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// Allowed axes: on edge or flat; also on end when the "no ends" rule is off (rules.noEnd === false).
+const randomAxis = (rng, rules) => (rules.noEnd === false ? rng.int(3) : 1 + rng.int(2));
+
 function randomChild(rng, parent, rules = {}) {
   const g = {
     parent,
     du: rng.intRange(-4, 4),
     dv: rng.intRange(-2, 2),
     turn: rng.int(2),
-    axis: 1 + rng.int(2),
+    axis: randomAxis(rng, rules),
   };
   // Stacking mode only (so other runs keep their random draws): on top of the parent or beside it, and the turn
   // in 15° steps - half of the stones square to the parent (0 or 90°), half at any step.
@@ -87,7 +93,7 @@ export function decode(genes, rules = {}) {
 const make = (genes, rules) => ({ genes, placements: decode(genes, rules) });
 
 export function randomGenome(rng, stoneCount, rules = {}) {
-  const genes = [{ parent: -1, x: 0.1 * rng.normal(), z: 0.1 * rng.normal(), yaw: 90 * rng.int(4), axis: 1 + rng.int(2) }];
+  const genes = [{ parent: -1, x: 0.1 * rng.normal(), z: 0.1 * rng.normal(), yaw: 90 * rng.int(4), axis: randomAxis(rng, rules) }];
   const n = Math.min(stoneCount, rng.intRange(4, 12));
   while (genes.length < n) genes.push(randomChild(rng, rng.int(genes.length), rules));
   return make(genes, rules);
@@ -146,7 +152,7 @@ export function mutate(rng, g, stoneCount, rules = {}) {
         x.rot = rng.chance(0.75) ? clamp(x.rot + (rng.chance(0.5) ? 1 : -1), -6, 6) : 6 * rng.int(2);
       } else x.turn = 1 - x.turn;
       break;
-    case 'axis': x.axis = x.axis === 1 ? 2 : 1; break;
+    case 'axis': x.axis = rules.noEnd === false ? (x.axis + 1 + rng.int(2)) % 3 : x.axis === 1 ? 2 : 1; break;
     case 'parent': x.parent = rng.int(i); break;
     case 'add':
       // Newer stones are more often built upon: the structure grows from its working edge.
