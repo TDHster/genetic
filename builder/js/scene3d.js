@@ -209,8 +209,9 @@ export class StructureView {
     this.postMesh.setMatrixAt(i, m);
     this.postMesh.count = i + 1;
     this.postMesh.instanceMatrix.needsUpdate = true;
-    // Big structures are built several stones per frame: no time for the falling-in effect.
-    this.stones.push({ dropFrames: this.buildRate < 1 ? DROP_FRAMES : 0 });
+    // Big structures are built several stones per frame: no time for the falling-in effect. In stacking mode
+    // a brick is set on its parent, not lowered - no falling-in either.
+    this.stones.push({ dropFrames: this.buildRate < 1 && !this.opts.stack ? DROP_FRAMES : 0 });
   }
 
   syncMeshes() {
@@ -244,6 +245,11 @@ export class StructureView {
             this.addStone(this.trial.items[ev.index]);
             this.setLabel(`стройка: камень ${ev.index + 1} из ${this.trial.plan.length}`);
             break;
+          }
+          if (ev.phase === 'remove') {
+            // Stacking without scaffolding: the last brick did not stay and was taken away.
+            this.stones.pop();
+            continue;
           }
           if (ev.phase === 'release') {
             this.postMesh.visible = false;

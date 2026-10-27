@@ -47,6 +47,17 @@
 // ground (a round arch springs from the ground).
 // Without scaffolding there is no centering. Scoring of the gate mode is in fitness.js.
 //
+// Stacking mode (opts.stack, with a tree genome - tree-genome.js, and scaffolding): a brick is SET ON a brick -
+// not lowered from above: on its parent's top face (or beside it on the same bed), in the parent's own frame as
+// it really lies, shifted along/across it by the gene. Nothing falls while building; a stone that would cut
+// into another is not laid (nor its branch). Roots are lowered to the ground as usual. Small errors of the
+// stones do not add up along a branch. Scoring then counts collapse (fitness.js).
+// Without scaffolding - a mason's way: the brick is set on its parent, the whole structure runs until calm, and
+// if that brick slid or fell (moved more than COLLAPSE_SHIFT) it is taken away and the next one is tried. So the
+// structure stands at every stage of building - it could be laid by hand without centering (no true arches,
+// but corbels, false vaults and leaning stones can). A brick that pushed others aside is still taken away, but
+// the others stay where they went - that costs at the end (fitness.js).
+//
 // Pedestal mode (opts.pedestal = half-size, m): there is no ground but a square pedestal (top at y = 0)
 // in a pit PIT_DEPTH deep. The task is reach (fitness.js): how far from the centre the structure gets.
 // A heap is useless here - it pours into the pit; only corbels, counterweights and cantilevers reach out.
@@ -54,8 +65,8 @@
 // The trial is a generator: evolution runs it to the end at once, the 3D view runs it step by step,
 // so both see exactly the same simulation (Rapier is deterministic).
 
-import { DENSITY } from './stones.js';
-import { measureStructure } from './fitness.js';
+import { DENSITY, BASE_SIZE } from './stones.js';
+import { measureStructure, COLLAPSE_SHIFT } from './fitness.js';
 
 // Simulation settings; times are in seconds, so the step `dt` can change without changing the test.
 // A mutable object (not constants) so that tools can try other values.
@@ -95,6 +106,7 @@ export const G = 9.81;
 export const GATE_HEIGHT = 0.3;
 export const GATE_DEPTH = 4;      // along z: through the whole building site
 export const PIT_DEPTH = 1.5;     // pedestal mode: depth of the pit around the pedestal
+const [BASE_SIZE_LENGTH, BASE_SIZE_WIDTH, BASE_SIZE_HEIGHT] = BASE_SIZE;
 const ABORT_MARGIN = 0.01;
 const ABORT_EVERY = 10;
 const GRID = 0.5;           // m: cell of the grid of placed stones
@@ -178,6 +190,7 @@ export class Trial {
   // opts: {scaffold: bool, tiltDeg: number, pile?: bool (score - see fitness.js), gateWidth?: number (m, 0 = no gate),
   //        gateArch?: bool (round centering), mirror?: bool (symmetry, see the header),
   //        pedestal?: number (half-size of the pedestal, m; 0 = ground everywhere, see the header),
+  //        stack?: bool (stacking mode, see the header; needs genome.genes), regular?: bool (perfect bricks),
   //        calmMin?: number (s, defaults to SIM.calmMin; longer = stricter, for checks),
   //        abortBelow?: number - stop as soon as the top is clearly below this score (see below)}
   constructor(R, quarry, genome, opts) {
@@ -188,7 +201,8 @@ export class Trial {
     [this.world, this.grounds] = this.makeWorld();
     this.centering = opts.gateWidth && opts.scaffold ? this.addCentering(this.world) : null;
     this.plan = buildPlan(genome, quarry.length, opts.mirror);
-    this.items = [];   // [{stone, placement, body, collider, placedY, settledY}] in construction order
+    this.items = [];   // [{stone, placement, body, collider, placedY, placedPos, settledY}] in construction order
+    this.byStone = new Map();   // quarry index -> item (stacking mode: finding a stone's parent)
     this.grid = new Map();   // "i,j" -> items whose horizontal extent touches the cell (scaffold mode)
     this.builtTop = 0;       // the highest point placed so far
     this.stepCount = 0;
@@ -313,8 +327,9 @@ export class Trial {
       .setTranslation(pos.x, pos.y, pos.z).setRotation(rot).setCanSleep(false);
     const body = this.world.createRigidBody(desc);
     const collider = this.world.createCollider(this.stoneCollider(stone), body);
-    const item = { stone, placement: p, body, collider, placedY: pos.y };
+    const item = { stone, placement: p, body, collider, placedY: pos.y, placedPos: { x: pos.x, y: pos.y, z: pos.z } };
     this.items.push(item);
+    this.byStone.set(stone.id, item);
     const e = this.extent(stone, pos, rot);
     this.builtTop = Math.max(this.builtTop, e[4]);
     if (fixed) this.gridAdd(item, e);
@@ -352,6 +367,18 @@ export class Trial {
     const pose = { pos: body.translation(), rot: body.rotation() };
     w.free();
     return pose;
+  }
+
+  // Building without scaffolding: the world runs until all stones are calm (at most SIM.buildMax).
+  *buildCalm() {
+    let calm = 0;
+    for (let s = 0; s < steps(SIM.buildMax); s++) {
+      this.step();
+      yield { phase: 'build' };
+      // Calm for several steps in a row: a rocking stone is slow only for a moment at each turn.
+      calm = this.isCalm(this.items) ? calm + 1 : 0;
+      if (calm >= steps(SIM.buildCalmTime)) break;
+    }
   }
 
   // Linear speed below `speed` m/s and angular below 10 * speed rad/s for every stone.
@@ -430,13 +457,83 @@ export class Trial {
     return 'unstable';
   }
 
+  // Stacking mode (see the header): the pose {pos, rot} of plan entry p set ON its parent - in the parent's own
+  // frame, as it really lies: shifted along and across it by the gene, and either on its top face (gene.up, the
+  // default) or beside it on the same bed; GAP above. Returns null for a root (it is lowered as usual) and
+  // 'skip' when the parent was not laid. A mirror copy is computed on the planned side from the mirrored parent
+  // reflected back, then reflected again.
+  stackedPose(p) {
+    const half = Math.floor(this.quarry.length / 2);
+    const g = this.genome.genes[p.mirror ? p.stone - half : p.stone];
+    if (!g || g.parent < 0) return null;
+    const parent = this.byStone.get(p.mirror ? g.parent + half : g.parent);
+    if (!parent) return 'skip';
+    const reflect = (q) => ({ x: q.x, y: -q.y, z: -q.z, w: q.w });
+    const s = p.mirror ? -1 : 1;
+    const pp = parent.body.translation();
+    const pr = p.mirror ? reflect(parent.body.rotation()) : parent.body.rotation();
+    const pa = parent.placement.axis;
+    // The parent's level frame: its turn without the base turn that set it flat or on edge.
+    const base = BASE[pa];
+    const level = quatMul(pr, { x: -base.x, y: -base.y, z: -base.z, w: base.w });
+    const height = (stone, axis) => (axis === 1 ? stone.size[1] : stone.size[2]);
+    const stone = this.quarry[p.stone];
+    const hp = height(parent.stone, pa), hc = height(stone, g.axis);
+    const k = this.opts.regular ? 1.01 : 1.03;   // the pitch of tree-genome.js
+    const u = g.du * BASE_SIZE_LENGTH * k / 4;
+    const v = g.dv * (pa === 1 ? BASE_SIZE_HEIGHT : BASE_SIZE_WIDTH) * k / 2;
+    const y = g.up === 0 ? (hc - hp) / 2 + GAP : (hp + hc) / 2 + GAP;
+    const off = rotatePoint(level, u, y, v);
+    const rot = quatMul(level, quatMul(quatAxisAngle(0, 1, 0, 90 * g.turn), BASE[g.axis]));
+    const pos = { x: s * pp.x + off[0], y: pp.y + off[1], z: pp.z + off[2] };
+    return p.mirror ? { pos: { x: -pos.x, y: pos.y, z: pos.z }, rot: reflect(rot) } : { pos, rot };
+  }
+
+  // True if a stone at pose {pos, rot} would cut into a laid stone, the ground or the centering.
+  overlaps(stone, pose) {
+    const shape = new this.R.ConvexPolyhedron(stone.points, null);
+    const e = this.extent(stone, pose.pos, pose.rot);
+    // Under scaffolding the laid stones are in the grid; without it they move, so all of them.
+    const near = (this.opts.scaffold ? this.gridQuery(e[0] - 0.01, e[1] + 0.01, e[2] - 0.01, e[3] + 0.01) : this.items)
+      .map((it) => it.collider);
+    const others = [...this.grounds, ...near];
+    if (this.centering) others.push(this.centering);
+    return others.some((c) => c.intersectsShape(shape, pose.pos, pose.rot));
+  }
+
   // Yields {phase, ...} after every placement and every physics step; returns the result.
   *run() {
     const seen = new Set();
-    for (const p of this.plan) {
+    const stacking = this.opts.stack && this.genome.genes;
+    for (let p of this.plan) {
       if (seen.has(p.stone) || p.stone >= this.quarry.length) continue;
       seen.add(p.stone);
       const stone = this.quarry[p.stone];
+      if (stacking) {
+        const pose = this.stackedPose(p);
+        if (pose === 'skip' || (pose && this.overlaps(stone, pose))) continue;   // lost, with its branch
+        if (pose && this.opts.scaffold) {
+          // Under scaffolding: held where it was set until all are laid.
+          this.addStone(stone, p, pose.pos, pose.rot, true);
+          yield { phase: 'place', index: this.items.length - 1 };
+          continue;
+        }
+        if (pose) {
+          // Without: set it, let everything calm down, take it away if it did not stay (see the header).
+          const item = this.addStone(stone, p, pose.pos, pose.rot, false);
+          yield { phase: 'place', index: this.items.length - 1 };
+          yield* this.buildCalm();
+          const t = item.body.translation(), v = item.body.linvel();
+          const moved = Math.hypot(t.x - pose.pos.x, t.y - pose.pos.y, t.z - pose.pos.z);
+          if (moved > COLLAPSE_SHIFT || Math.hypot(v.x, v.y, v.z) > CALM_SPEED) {
+            this.world.removeRigidBody(item.body);
+            this.items.pop();
+            this.byStone.delete(stone.id);
+            yield { phase: 'remove' };
+          }
+          continue;
+        }
+      }
       const rot = planRotation(p);
       const at = this.lower(stone, p, rot);
       if (this.opts.scaffold) {
@@ -448,14 +545,7 @@ export class Trial {
       // Without scaffolding the whole structure must calm down before the next stone.
       this.addStone(stone, p, at, rot, false);
       yield { phase: 'place', index: this.items.length - 1 };
-      let calm = 0;
-      for (let s = 0; s < steps(SIM.buildMax); s++) {
-        this.step();
-        yield { phase: 'build' };
-        // Calm for several steps in a row: a rocking stone is slow only for a moment at each turn.
-        calm = this.isCalm(this.items) ? calm + 1 : 0;
-        if (calm >= steps(SIM.buildCalmTime)) break;
-      }
+      yield* this.buildCalm();
     }
     if (this.opts.scaffold) {
       for (const it of this.items) it.body.setBodyType(this.R.RigidBodyType.Dynamic, true);
@@ -475,6 +565,13 @@ export class Trial {
     // a tall stack legitimately sinks a few mm per joint when the scaffolding goes.
     for (const it of this.items) it.settledY = it.body.translation().y;
     const alpha = this.opts.tiltDeg;
+    // Early stop before the tilt test: the test can only lower the score (stones go down, slide off, fall),
+    // so a child already below the score to beat after settling cannot win - the test is ~3/4 of the cost.
+    // The top alone (shouldAbort) was a weak bound: the score is also x the pile share and the share standing.
+    if (alpha > 0 && this.opts.abortBelow !== undefined) {
+      const pre = measureStructure(this);
+      if (pre.score < this.opts.abortBelow - ABORT_MARGIN) return { score: pre.score, height: pre.height, aborted: true };
+    }
     // tiltDeg = 0: no tilt test, the structure only has to stand after the scaffolding is gone.
     if (alpha > 0) {
       const ramp = steps(SIM.rampTime);

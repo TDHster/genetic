@@ -31,7 +31,7 @@ function reach(trial, corners) {
   const stack = [];
   const visit = (c1, c2) => {
     const i = index.get(c2.handle);
-    if (i === undefined || held[i] || trial.items[i].body.translation().y < -HELD_BELOW) return;
+    if (i === undefined || held[i] || trial.items[i].body.translation().y < -HELD_BELOW || moving(trial.items[i])) return;
     let touching = false;
     trial.world.contactPair(c1, c2, (m) => { if (m.numContacts() > 0) touching = true; });
     if (!touching) return;
@@ -50,6 +50,12 @@ function reach(trial, corners) {
   return best;
 }
 
+// Span cap (opts.spanCap): the height over the passage counts only up to GATE_HEIGHT + SPAN_OVER - the height at which the
+// passage widens (GATE_READY in evolution.js). Without it a 1.5 m tower over the passage with two stones inside
+// (1.5 x 0.8^2 = 0.96) beat a clean low vault (~0.5): evolution chased height, and of seeds 1-4 only seed 1 got
+// past 20 cm. With the cap the only way up is a clean span, then a wider one.
+// (GATE_HEIGHT + SPAN_OVER; computed in place: physics.js and this module import each other.)
+export const SPAN_OVER = 0.2;
 export const GATE_BLOCK_PENALTY = 0.8;   // score factor per stone left inside the passage (0.5 was too harsh:
                                          // one stray stone halved the score and evolution could not feel its way)
 
@@ -77,7 +83,8 @@ function gateMeasure(trial, corners, width, arch) {
     return true;
   });
   let above = 0;
-  for (const cs of corners) {
+  for (const [i, cs] of corners.entries()) {
+    if (moving(trial.items[i])) continue;
     let xmin = Infinity, xmax = -Infinity;
     for (const c of cs) { xmin = Math.min(xmin, c[0]); xmax = Math.max(xmax, c[0]); }
     // Over the passage: across its centre line and within its depth (a stone beyond its end spans nothing).
@@ -88,6 +95,18 @@ function gateMeasure(trial, corners, width, arch) {
   return { above, blocked };
 }
 
+// Stacking mode (opts.stack): collapse costs - score x share of the laid stones still within COLLAPSE_SHIFT of
+// where they were laid (more than the joints settle when the scaffolding goes). A structure that almost stands
+// then ranks above one that fell apart, instead of both just being lower.
+export const COLLAPSE_SHIFT = 0.03;
+// "Until calm" (physics.js) watches only the top of the structure, so at the moment of measuring lower stones may
+// still be falling. A stone faster than MOVING_SPEED counts for nothing: not for reach, not over the passage, and
+// in stacking mode as fallen (a chain of stones dropping through the air once scored a 1.8 m reach).
+export const MOVING_SPEED = 0.05;
+const moving = (it) => {
+  const v = it.body.linvel();
+  return Math.hypot(v.x, v.y, v.z) > MOVING_SPEED;
+};
 export const FALL_DROP = 0.05;
 export const HANG_GAP = 0.05;
 export const PROFILE_BANDS = 5;
@@ -156,16 +175,26 @@ export function measureStructure(trial) {
   let gate = null;
   if (trial.opts.gateWidth) {
     gate = gateMeasure(trial, corners, trial.opts.gateWidth, trial.opts.gateArch);
-    score = gate.above * GATE_BLOCK_PENALTY ** gate.blocked;
+    const above = trial.opts.spanCap ? Math.min(gate.above, GATE_HEIGHT + SPAN_OVER) : gate.above;
+    score = above * GATE_BLOCK_PENALTY ** gate.blocked;
   }
   if (trial.opts.pile) score *= share;
   const reached = trial.opts.pedestal ? reach(trial, corners) : undefined;
   if (trial.opts.pedestal) score = reached;
+  let standing;
+  if (trial.opts.stack) {
+    const moved = items.filter((it) => {
+      const p = it.body.translation(), q = it.placedPos;
+      return Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z) > COLLAPSE_SHIFT || moving(it);
+    }).length;
+    standing = items.length ? 1 - moved / items.length : 0;
+    score *= standing;
+  }
   return {
     score,
     gateAbove: gate ? gate.above : undefined,
     gateBlocked: gate ? gate.blocked : undefined,
-    reach: reached, height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
+    reach: reached, standing, height, share, level, stones: items.length, structure: structure.length, fallen, hanging, profile,
   };
 }
 

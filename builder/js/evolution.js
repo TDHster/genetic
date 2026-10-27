@@ -28,7 +28,7 @@
 // the pool like any child, so the map also feeds the pool with new forms.
 
 import { makeRng } from './rng.js';
-import { makeQuarry } from './stones.js';
+import { makeQuarry, quarryError } from './stones.js';
 import * as directGenome from './genome.js';
 import * as treeGenome from './tree-genome.js';
 import { GATE_HEIGHT } from './physics.js';
@@ -77,12 +77,14 @@ export class Evolution {
   // cfg: {seed, poolSize, stoneCount, scaffold, tiltDeg, pile, noEnd, gateWidth (0 = no gate), gateArch, mirror,
   //       maxGenerations?, stagnation?, seedGenomes? (start the pool with these),
   //       pedestal? (half-size, m: build on a pedestal over a pit, score = reach), genome? ('tree' - tree-genome.js),
-  //       regular? (perfect bricks, see stones.js)}
+  //       regular? (perfect bricks, see stones.js), stack? (stacking mode, physics.js; implies the tree genome),
+  //       spanCap? (height over the passage counts up to SPAN_CAP, fitness.js)}
   constructor(cfg) {
     this.cfg = cfg;
-    this.rules = { noEnd: !!cfg.noEnd, regular: !!cfg.regular };
-    // The genome: stone by stone (genome.js) or a tree of stones laid relative to each other (tree-genome.js).
-    this.G = cfg.genome === 'tree' ? treeGenome : directGenome;
+    this.rules = { noEnd: !!cfg.noEnd, regular: !!cfg.regular, stack: !!cfg.stack };
+    // The genome: stone by stone (genome.js) or a tree of stones laid relative to each other (tree-genome.js);
+    // stacking mode needs the tree.
+    this.G = cfg.genome === 'tree' || cfg.stack ? treeGenome : directGenome;
     // With mirror symmetry the genome plans only the first half of the quarry (see buildPlan in physics.js).
     if (cfg.growStones && cfg.mirror) throw new Error('growing quarry does not work with mirror symmetry');
     // Stones in the quarry now: grows from STONES_START to cfg.stoneCount (see the header), or fixed.
@@ -91,7 +93,7 @@ export class Evolution {
     // The passage width now: grows from GATE_START to cfg.gateWidth (see the header), or fixed.
     this.gateNow = cfg.gateWidth && cfg.gateGrow ? Math.min(GATE_START, cfg.gateWidth) : cfg.gateWidth || 0;
     this.rng = makeRng(cfg.seed);
-    this.quarry = makeQuarry(cfg.stoneCount, cfg.seed, !!cfg.regular);
+    this.quarry = makeQuarry(cfg.stoneCount, cfg.seed, quarryError(cfg));
     this.matings = 0;
     this.pool = [];      // [{genome, result, id, born}]
     this.nextId = 1;
@@ -106,10 +108,10 @@ export class Evolution {
 
   // The settings a worker needs to score genomes exactly like the others.
   evalConfig() {
-    const { seed, scaffold, tiltDeg, pile, gateArch, mirror, pedestal, regular } = this.cfg;
+    const { seed, scaffold, tiltDeg, pile, gateArch, mirror, pedestal, regular, stack, spanCap } = this.cfg;
     return { seed, stoneCount: this.stonesNow, scaffold, tiltDeg, pile: !!pile, gateWidth: this.gateNow, gateArch: !!gateArch,
       mirror: !!mirror, pedestal: pedestal || 0,
-      regular: !!regular };
+      regular: !!regular, stack: !!stack, spanCap: !!spanCap };
   }
 
   get generation() { return this.matings / this.cfg.poolSize; }
@@ -300,6 +302,8 @@ export class Evolution {
       mirror: !!this.cfg.mirror,
       pedestal: this.cfg.pedestal || 0,
       regular: !!this.cfg.regular,
+      stack: !!this.cfg.stack,
+      spanCap: !!this.cfg.spanCap,
       generation: Math.floor(ind.born),
       result: ind.result,
       genome: this.G.cloneGenome(ind.genome),

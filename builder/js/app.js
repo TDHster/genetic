@@ -8,7 +8,7 @@ import { Evolution, BASE_BINS, TAPER_BINS } from './evolution.js';
 import { WorkerPool } from './workers.js';
 import { StructureView } from './scene3d.js';
 import { drawHistory, drawProfile, drawMap } from './charts.js';
-import { makeQuarry } from './stones.js';
+import { makeQuarry, quarryError } from './stones.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,6 +48,7 @@ function readConfig() {
     genome: $('cfg-tree').checked ? 'tree' : 'direct',
     pedestal: $('cfg-pedestal').checked ? 0.2 : 0,
     regular: $('cfg-regular').checked,
+    stack: $('cfg-stack').checked,
     gateGrow: $('cfg-gate-grow').checked,
   };
 }
@@ -214,6 +215,7 @@ function describe(result, born, replayHeight) {
     ${score}
     <tr><th>Камней в плане / в постройке</th><td>${result.stones} / ${result.structure}</td></tr>
     <tr><th>Упало при испытании</th><td>${result.fallen}</td></tr>
+    ${result.standing !== undefined ? `<tr><th>Устояло (оценка × доля)</th><td>${(100 * result.standing).toFixed(0)} %</td></tr>` : ''}
     <tr><th>Висячих (пролёты)</th><td>${result.hanging}</td></tr>
     <tr><th>Основание / верх (радиус)</th><td>${taper}</td></tr>
     ${born !== undefined ? `<tr><th>Родилась в поколении</th><td>${Math.floor(born)}</td></tr>` : ''}
@@ -231,7 +233,8 @@ function showIndividual(ind, title) {
   $('view-title').textContent = title;
   showInfo(ind.result, ind.born);
   const opts = { scaffold: evo.cfg.scaffold, tiltDeg: evo.cfg.tiltDeg, pile: evo.cfg.pile, gateWidth: evo.gateNow,
-    gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror,     pedestal: evo.cfg.pedestal || 0 };
+    gateArch: evo.cfg.gateArch, mirror: evo.cfg.mirror,     pedestal: evo.cfg.pedestal || 0,
+    regular: !!evo.cfg.regular, stack: !!evo.cfg.stack, spanCap: !!evo.cfg.spanCap };
   view.show(evo.quarry, ind.genome, opts, ind.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(ind.result, ind.born, r.height);
@@ -259,13 +262,43 @@ function redrawMap() {
   mapHit = drawMap($('map-canvas'), evo.archive, BASE_BINS, TAPER_BINS, shown && shown.kind === 'cell' ? shown.key : null);
 }
 
+// Trial options and quarry of a saved structure (exportIndividual / a loaded file).
+function optsOf(data) {
+  return { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0,
+    gateArch: !!data.gateArch, mirror: !!data.mirror, pedestal: data.pedestal || 0, regular: !!data.regular,
+    stack: !!data.stack, spanCap: !!data.spanCap };
+}
+const quarryOf = (data) => makeQuarry(data.stoneCount, data.seed, quarryError(data));
+
+// The structure shown now, as saved data (or null).
+function shownData() {
+  if (shown && shown.kind === 'imported') return shown.data;
+  if (shown && shown.kind === 'cell' && evo.archive.get(shown.key)) return evo.exportIndividual(evo.archive.get(shown.key));
+  if (evo && evo.best) return evo.exportBest();
+  return null;
+}
+
+// Replays the shown structure with a 5° tilt test - evolution may run without one (much faster), so this
+// shows whether the structure would stand in a less ideal world. Does not change the run.
+function tiltCheck() {
+  const data = shownData();
+  if (!data) return;
+  $('view-follow').checked = false;
+  $('view-title').textContent = 'Проверка наклоном 5°';
+  view.show(quarryOf(data), data.genome, { ...optsOf(data), tiltDeg: 5 }, data.result.height, (r) => {
+    finishedAt = performance.now();
+    const held = r.score >= 0.9 * data.result.score;
+    $('view-title').textContent = `Проверка наклоном 5°: ${held ? 'держит' : 'не держит'} — оценка ${r.score.toFixed(3)}`
+      + ` (без наклона ${data.result.score.toFixed(3)}), высота ${r.height.toFixed(2)} м`;
+  });
+}
+
 function showImported(data) {
   shown = { kind: 'imported', data };
   $('view-follow').checked = false;
   $('view-title').textContent = `Загруженная постройка (seed ${data.seed}, ${data.scaffold ? 'с лесами' : 'без лесов'})`;
   showInfo(data.result);
-  const quarry = makeQuarry(data.stoneCount, data.seed, !!data.regular);
-  view.show(quarry, data.genome, { scaffold: data.scaffold, tiltDeg: data.tiltDeg, pile: data.pile, gateWidth: data.gateWidth || 0, gateArch: !!data.gateArch, mirror: !!data.mirror, pedestal: data.pedestal || 0 }, data.result.height, (r) => {
+  view.show(quarryOf(data), data.genome, optsOf(data), data.result.height, (r) => {
     finishedAt = performance.now();
     showInfo(data.result, undefined, r.height);
   });
@@ -278,10 +311,7 @@ function replay() {
 }
 
 function exportShown() {
-  let data = null;
-  if (shown && shown.kind === 'imported') data = shown.data;
-  else if (shown && shown.kind === 'cell' && evo.archive.get(shown.key)) data = evo.exportIndividual(evo.archive.get(shown.key));
-  else if (evo && evo.best) data = evo.exportBest();
+  const data = shownData();
   if (!data) return;
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -334,6 +364,7 @@ async function main() {
   $('cfg-gate-on').onchange = () => { $('cfg-gate').disabled = !$('cfg-gate-on').checked; };
   for (const id of ['stop-stag-on', 'stop-stag', 'stop-max-on', 'stop-max']) $(id).onchange = applyStopRules;
   $('btn-replay').onclick = replay;
+  $('btn-tilt-check').onclick = tiltCheck;
   $('map-canvas').onclick = (e) => {
     const r = e.target.getBoundingClientRect();
     const key = mapHit && mapHit(e.clientX - r.left, e.clientY - r.top);

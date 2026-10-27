@@ -21,27 +21,33 @@ export const DENSITY = 2400;         // kg/m^3, sandstone
 export const WEDGE_SHARE = 0.25;
 export const WEDGE_TAPER = [0.05, 0.2];
 
-// regular: perfect bricks - exactly BASE_SIZE, no corner error, no wedges (the same random draws are made,
-// so the colours stay). Courses then fit as planned: a tree genome's plan (tree-genome.js) and the physics agree.
+// error: scale of the size and corner errors (the same random draws are made, so the colours stay).
+//   1 - rough stones as described above, with wedges;
+//   STACK_ERROR - stacking mode (cfg.stack): +-2 % and +-0.8 mm, no wedges - nearly bricks, still not perfect;
+//   0 - perfect bricks (cfg.regular): exactly BASE_SIZE, no wedges. Courses then fit as planned.
+// quarryError(cfg) picks it from the run settings.
 // Returns [{id, size: [sx, sy, sz], points: Float32Array(24), color, wedge}]
 // points are the 8 corners in the stone's local frame, centred on their average; wedge is the taper
 // (0 for a rectangular stone).
-export function makeQuarry(count, seed, regular = false) {
+export const STACK_ERROR = 0.2;
+export const quarryError = (cfg) => (cfg.regular ? 0 : cfg.stack ? STACK_ERROR : 1);
+
+export function makeQuarry(count, seed, error = 1) {
   // A separate generator so the quarry does not depend on how evolution uses the main rng.
   const rng = makeRng(seed * 7919 + 17);
   const wedgeRng = makeRng(seed * 104729 + 3);
   const stones = [];
   for (let id = 0; id < count; id++) {
-    const size = BASE_SIZE.map((s) => s * (1 + (regular ? 0 : SIZE_ERROR) * (2 * rng.next() - 1)));
+    const size = BASE_SIZE.map((s) => s * (1 + error * SIZE_ERROR * (2 * rng.next() - 1)));
     const pts = [];
     const taper = wedgeRng.chance(WEDGE_SHARE)
       ? WEDGE_TAPER[0] + (WEDGE_TAPER[1] - WEDGE_TAPER[0]) * wedgeRng.next() : 0;
-    const wedge = regular ? 0 : taper;
+    const wedge = error === 1 ? taper : 0;
     for (let i = 0; i < 8; i++) {
       const sign = [i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? 1 : -1];
       for (let a = 0; a < 3; a++) {
         const half = a === 1 ? size[a] / 2 * (1 + wedge * sign[2]) : size[a] / 2;
-        pts.push(sign[a] * half + (regular ? 0 : CORNER_ERROR) * (2 * rng.next() - 1));
+        pts.push(sign[a] * half + error * CORNER_ERROR * (2 * rng.next() - 1));
       }
     }
     // Centre the corners so the body origin is close to the centre of mass.
