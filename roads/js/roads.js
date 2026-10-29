@@ -13,13 +13,15 @@ const MAP_W = 100;
 const MAP_H = 70;
 
 // The task: which cities to connect. Filled by setTask() in fitness.js.
-//   map: 'random' | 'triangle' | 'square' | 'hexagon'; cities: how many (random map only);
+//   map: 'trilattice' | 'grid' | 'random' | 'triangle' | 'square' | 'hexagon'; cities: how many (random map only);
 //   mapSeed: seed of the random map (separate from the evolution seed: same map, different runs).
-const TASK = { map: 'random', cities: 15, mapSeed: 1 };
+const TASK = { map: 'trilattice', cities: 20, mapSeed: 1 };
 // City positions of the current task (filled by setTask).
 const CITIES = [];
 
 const MAP_NAMES = {
+  trilattice: 'треугольная решётка',
+  grid: 'квадратная сетка',
   random: 'случайные города',
   triangle: 'три города',
   square: 'квадрат',
@@ -37,6 +39,17 @@ function makeCities(task) {
   if (task.map === 'hexagon') {
     const r = 31;
     return [0, 1, 2, 3, 4, 5].map((k) => ({ x: cx + r * Math.cos(k * Math.PI / 3), y: cy + r * Math.sin(k * Math.PI / 3) }));
+  }
+  if (task.map === 'trilattice') {
+    // 4 rows of 4, every row shifted by half a step: all neighbours at the same distance (equilateral triangles).
+    const step = 20, rowH = step * Math.sqrt(3) / 2, cities = [];
+    for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) cities.push({ x: cx + (i - 1.75 + (j % 2) / 2) * step, y: cy + (j - 1.5) * rowH });
+    return cities;
+  }
+  if (task.map === 'grid') {
+    const step = 17, cities = [];
+    for (let j = 0; j < 4; j++) for (let i = 0; i < 5; i++) cities.push({ x: cx + (i - 2) * step, y: cy + (j - 1.5) * step });
+    return cities;
   }
   // Random cities, not closer than minGap to each other (otherwise two dots merge on the map).
   const rng = makeRng(task.mapSeed);
@@ -60,10 +73,12 @@ function randomPoint(rng) {
   return { x: rng.next() * MAP_W, y: rng.next() * MAP_H };
 }
 
-// Starting pool: a random number of junctions at random places. Most such networks are longer
-// than the plain spanning tree: a junction in a random place only adds a detour.
+// Starting pool: from 1 to n − 2 junctions at random places. At least one junction on purpose:
+// a network without junctions is the plain spanning tree, which is already good, and the evolution
+// would start from it instead of finding its way. Most random networks are longer than the spanning
+// tree: a junction in a random place only adds a detour.
 function randomRoads(rng) {
-  const k = rng.int(maxJunctions() + 1);
+  const k = 1 + rng.int(maxJunctions());
   const junctions = [];
   for (let i = 0; i < k; i++) junctions.push(randomPoint(rng));
   return { junctions };
