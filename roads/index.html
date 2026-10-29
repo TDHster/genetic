@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Дороги между городами</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Дороги между городами</h1>
+    <p>Генетический алгоритм ищет, как соединить все города дорогами <b>наименьшей общей длины</b>. Если строить дороги только
+      от города к городу, лучший ответ известен точно — это <b>минимальное остовное дерево</b> (остов). Но можно ставить
+      свои развилки в чистом поле, и тогда сеть получается короче. Это <b>задача Штейнера</b>: для многих городов её не умеют
+      решать быстро и точно. Эволюция расставляет развилки вслепую, а в ответе у каждой полезной развилки сходятся три
+      дороги под углом <b>120°</b> — так же ложится мыльная плёнка между штырьками.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="Один турнир: 3 случайные сети, худшая умирает, две оставшиеся дают потомка">1 спаривание</button>
+      <button id="btn-gen" title="Столько спариваний, сколько сетей в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул, те же города">🎲 Новый seed</button>
+      <button id="btn-new-map" title="Новые случайные города">🗺 Новая карта</button>
+    </div>
+    <div class="settings">
+      <label>Карта
+        <select id="cfg-map">
+          <option value="random" selected>случайные города</option>
+          <option value="triangle">три города (точка Ферма)</option>
+          <option value="square">квадрат</option>
+          <option value="hexagon">шестиугольник</option>
+        </select>
+      </label>
+      <label title="Только для случайной карты">Городов <input id="cfg-cities" type="number" min="3" max="50" value="20"></label>
+      <label title="Seed карты: те же города при любом seed эволюции">Seed карты <input id="cfg-map-seed" type="number" value="1"></label>
+      <label>Пул сетей
+        <select id="cfg-pop">
+          <option>200</option><option selected>500</option><option>1000</option><option>2000</option>
+        </select>
+      </label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <label title="Сколько поколений в секунду. На малых картах на максимуме всё кончается за секунды — замедли, чтобы рассмотреть">Скорость
+        <select id="cfg-speed">
+          <option value="0" selected>максимум</option>
+          <option value="20">20 поколений/с</option>
+          <option value="5">5 поколений/с</option>
+          <option value="1">1 поколение/с</option>
+        </select>
+      </label>
+      <span class="hint">настройки применяются по «Сброс» (скорость — сразу)</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label title="Только для готовых карт: для случайных городов точный ответ неизвестен"><input id="stop-exact-on" type="checkbox" checked> длиннее точного ответа не больше чем на
+        <input id="stop-exact" type="number" min="0" step="any" value="0.01"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="200"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="2000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучшая сеть в пуле</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последняя погибшая</option>
+            <option value="mst">Остов без развилок (эталон)</option>
+            <option value="exact">Точный ответ (эталон)</option>
+          </select>
+        </h2>
+        <label class="inline-check"><input id="show-mst" type="checkbox" checked> показать остов</label>
+      </div>
+      <canvas id="map-canvas" width="640" height="460"></canvas>
+      <div class="legend">
+        <span style="--c:#f2f4fa">город</span>
+        <span style="--c:#5b8def">дорога</span>
+        <span style="--c:#3fbf5f">развилка: 3 дороги под 120°</span>
+        <span style="--c:#f0c040">развилка, углы не 120°</span>
+        <span style="--c:#6b7390">лишняя развилка</span>
+        <span style="--c:#b0b8d0">остов (пунктир)</span>
+      </div>
+      <div id="net-info" class="info"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="240"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — длина лучшей сети (шкала справа, меньше — лучше), серый пунктир — остов,
+        жёлтый — точный ответ (для готовых карт).</p>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 спаривание», чтобы увидеть один шаг эволюции подробно.</div>
+
+      <h2>Геном: развилки</h2>
+      <div id="genome-info" class="info"></div>
+    </section>
+  </main>
+
+  <section class="panel score-panel">
+    <h2>Из чего складывается оценка</h2>
+    <div id="score-info" class="info"></div>
+  </section>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Сеть</b> (<code>js/roads.js</code>): города заданы картой. Геном — список развилок: точки на карте, где могут
+        сходиться дороги. Сколько их — тоже решает эволюция (от нуля до n − 2: больше в лучшей сети не бывает).
+        Самих дорог в геноме нет.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): для городов и развилок строится минимальное остовное дерево
+        (алгоритм Прима: дерево растёт от одного узла, каждый раз добавляя самую короткую дорогу к ещё не подключённому).
+        Для заданных точек это точно лучшая сеть, поэтому эволюции остаётся только расставить развилки.
+        Оценка = L<sub>остова</sub> / L: единица — как остов без развилок, больше — короче. Развилка с одной или двумя дорогами
+        бесполезна — тупик или изгиб, — но сеть не ломает: просто удлиняет её.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в других проектах: трое, худший умирает, потомок
+        с мутацией. Скрещивание — карту режет случайная прямая: развилки с одной стороны от мамы, с другой от папы.
+        Мутации слепые: маленький или большой сдвиг развилки, новая развилка рядом с городом (или в случайном месте),
+        удаление развилки. Ни одна мутация не знает про 120° — это правило эволюция находит сама.</li>
+      <li><b>Картинки</b> (<code>js/draw.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/roads.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
