@@ -2,13 +2,15 @@
 // THE ROAD NETWORK: what evolves and what a genome turns into.
 //
 // Cities are fixed by the task. The genome always has JUNCTIONS: extra points in the field
-// where roads may meet (Steiner points). Two modes (TASK.mode):
+// where roads may meet (Steiner points). Three modes (TASK.mode):
 //   - 'tree': the roads are NOT in the genome. For any set of points (cities + junctions) the shortest
 //     tree that connects them is known exactly - the minimum spanning tree (see fitness.js).
 //     Evolution only answers "where to put the junctions and how many", every genome is a valid network;
 //   - 'roads': the roads ARE in the genome too, as pairs of nodes. A random genome is a tangle of long
 //     roads, often with cities left unconnected. Evolution has to learn everything itself: connect all
-//     the cities, drop the extra roads, and only then place the junctions.
+//     the cities, drop the extra roads, and only then place the junctions;
+//   - 'routes': the same genome as 'roads', but the goal also counts trips between the cities (fitness.js):
+//     a compromise between cheap building and short trips.
 //
 // Coordinates are kilometres on a map MAP_W × MAP_H.
 
@@ -18,8 +20,13 @@ const MAP_H = 70;
 // The task: which cities to connect. Filled by setTask() in fitness.js.
 //   map: 'trilattice' | 'grid' | 'random' | 'triangle' | 'square' | 'hexagon'; cities: how many (random map only);
 //   mapSeed: seed of the random map (separate from the evolution seed: same map, different runs).
-//   mode: 'tree' | 'roads' (see above).
-const TASK = { map: 'trilattice', cities: 20, mapSeed: 1, mode: 'roads' };
+//   mode: 'tree' | 'roads' | 'routes' (see above); tripWeight: k in the 'routes' cost (fitness.js).
+const TASK = { map: 'trilattice', cities: 20, mapSeed: 1, mode: 'routes', tripWeight: 30 };
+
+// Are the roads in the genome ('roads' and 'routes') or built by the MST ('tree')?
+function roadsInGenome() {
+  return TASK.mode !== 'tree';
+}
 // City positions of the current task (filled by setTask).
 const CITIES = [];
 
@@ -85,13 +92,13 @@ function resetJunctionIds() {
 }
 
 function randomRoads(rng) {
-  return TASK.mode === 'roads' ? randomRoadsFree(rng) : randomRoadsTree(rng);
+  return roadsInGenome() ? randomRoadsFree(rng) : randomRoadsTree(rng);
 }
 function crossover(mom, dad, rng) {
-  return TASK.mode === 'roads' ? crossoverFree(mom, dad, rng) : crossoverTree(mom, dad, rng);
+  return roadsInGenome() ? crossoverFree(mom, dad, rng) : crossoverTree(mom, dad, rng);
 }
 function mutate(genome, rng) {
-  return TASK.mode === 'roads' ? mutateFree(genome, rng) : mutateTree(genome, rng);
+  return roadsInGenome() ? mutateFree(genome, rng) : mutateTree(genome, rng);
 }
 
 // A random straight line across the map: side(q) tells which side of it the point q is on.

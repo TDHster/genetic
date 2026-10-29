@@ -87,7 +87,9 @@ function drawMap(ctx, net, w, h, showMst) {
 
   ctx.font = '13px system-ui, sans-serif';
   ctx.fillStyle = COLORS.text;
-  ctx.fillText(`${net.length.toFixed(2)} км` + (net.connected ? '' : ` · связано ${Math.round(net.share * 100)}% городов`), 10, 18);
+  ctx.fillText(`дороги ${net.length.toFixed(1)} км` +
+    (!net.connected ? ` · связано ${Math.round(net.share * 100)}% городов`
+      : TASK.mode === 'routes' ? ` · средняя поездка ${net.trip.toFixed(1)} км · стоимость ${net.cost.toFixed(0)}` : ''), 10, 18);
   ctx.restore();
 }
 
@@ -97,7 +99,7 @@ function niceStep(raw) {
   return 10 * p;
 }
 
-// Class shares per generation (stacked), the best length (white) and the references (dashed).
+// Class shares per generation (stacked), the best cost (white; = length unless the mode is 'routes') and the references (dashed).
 function drawPopulationChart(ctx, history, w, h) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, w, h);
@@ -121,10 +123,10 @@ function drawPopulationChart(ctx, history, w, h) {
   // Length axis (right): the gain over the MST is a few percent, so the axis spans only
   // from a bit below the best (or the exact answer) to a bit above the MST - at most 30% above,
   // longer networks (the random tangle at the start) are drawn at the top edge.
-  // null = not all cities connected yet: no length to draw.
-  const mstL = refLength('mst');
-  const lengths = history.map((r) => r.length).filter((l) => l !== null);
-  const lo = Math.min(...lengths, refLength('exact'), mstL) - 0.01 * mstL;
+  // null = not all cities connected yet: nothing to draw.
+  const mstL = refCost('mst');
+  const lengths = history.map((r) => r.cost).filter((l) => l !== null);
+  const lo = Math.min(...lengths, refCost('exact'), mstL) - 0.01 * mstL;
   const hi = Math.min(Math.max(mstL, ...lengths), 1.3 * mstL) + 0.01 * mstL;
   const sy = (l) => pad.t + ph * (1 - (Math.min(hi, l) - lo) / (hi - lo));
 
@@ -133,7 +135,7 @@ function drawPopulationChart(ctx, history, w, h) {
   for (const [key, color] of [['mst', COLORS.mst], ['exact', COLORS.exact]]) {
     if (!REFS[key]) continue;
     ctx.strokeStyle = color;
-    ctx.beginPath(); ctx.moveTo(pad.l, sy(REFS[key].length)); ctx.lineTo(pad.l + pw, sy(REFS[key].length)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad.l, sy(REFS[key].cost)); ctx.lineTo(pad.l + pw, sy(REFS[key].cost)); ctx.stroke();
   }
   ctx.setLineDash([]);
   ctx.strokeStyle = '#ffffff';
@@ -141,9 +143,9 @@ function drawPopulationChart(ctx, history, w, h) {
   ctx.beginPath();
   let started = false;
   history.forEach((r, i) => {
-    if (r.length === null) return;
+    if (r.cost === null) return;
     const x = pad.l + (i / (n - 1)) * pw;
-    if (started) ctx.lineTo(x, sy(r.length)); else { ctx.moveTo(x, sy(r.length)); started = true; }
+    if (started) ctx.lineTo(x, sy(r.cost)); else { ctx.moveTo(x, sy(r.cost)); started = true; }
   });
   ctx.stroke();
   ctx.lineWidth = 1;
@@ -152,7 +154,7 @@ function drawPopulationChart(ctx, history, w, h) {
   ctx.textAlign = 'right';
   for (const f of [0, 0.5, 1]) ctx.fillText(Math.round(f * 100) + '%', pad.l - 4, pad.t + ph * (1 - f) + 4);
   ctx.textAlign = 'left';
-  for (const f of [0, 0.5, 1]) ctx.fillText((lo + f * (hi - lo)).toFixed(1) + ' км', pad.l + pw + 4, pad.t + ph * (1 - f) + 4);
+  for (const f of [0, 0.5, 1]) ctx.fillText((lo + f * (hi - lo)).toFixed(TASK.mode === 'routes' ? 0 : 1) + (TASK.mode === 'routes' ? '' : ' км'), pad.l + pw + 4, pad.t + ph * (1 - f) + 4);
   ctx.textAlign = 'center';
   const gens = n - 1;
   const step = niceStep(gens / 5);

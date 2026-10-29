@@ -1,5 +1,5 @@
 // Run the road network evolution without a browser.
-// Usage: node tools/headless.js [generations] [populationSize] [seed] [trilattice|grid|random|triangle|square|hexagon] [cities] [mapSeed] [roads|tree]
+// Usage: node tools/headless.js [generations] [populationSize] [seed] [trilattice|grid|random|triangle|square|hexagon] [cities] [mapSeed] [routes|roads|tree] [tripWeight]
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -16,7 +16,8 @@ const task = {
   map: process.argv[5] || 'random',
   cities: Number(process.argv[6] || 15),
   mapSeed: Number(process.argv[7] || 1),
-  mode: process.argv[8] || 'roads',
+  mode: process.argv[8] || 'routes',
+  tripWeight: Number(process.argv[9] || 30),
 };
 context.cfg = { seed, populationSize, mutationsPerChild: 1, task };
 const started = Date.now();
@@ -34,7 +35,10 @@ function report() {
   const gap = refs.exact ? `, от точного +${(100 * (best.length / refs.exact.length - 1)).toFixed(3)}%` : '';
   const roads = best.genome.roads ? `, дорог ${best.genome.roads.length} (лишних ${best.extra})` : '';
   console.log(`gen ${evo.generation.toFixed(0).padStart(4)} | ${shares.join(', ')} | best ` +
-    (best.connected ? `${km(best.length)} (короче остова на ${gain}%${gap})` : `связано ${(100 * best.share).toFixed(0)}% городов`) +
+    (!best.connected ? `связано ${(100 * best.share).toFixed(0)}% городов`
+      : task.mode === 'routes' ? `стоимость ${best.cost.toFixed(1)} (остов ${refs.mst.cost.toFixed(1)}), дороги ${km(best.length)}, ` +
+        `средняя поездка ${km(best.trip)}, крюк ×${best.detour.toFixed(3)}`
+      : `${km(best.length)} (короче остова на ${gain}%${gap})`) +
     `, развилок ${best.genome.junctions.length}${roads}`);
 }
 

@@ -31,10 +31,11 @@ class Evolution {
     return { id: this.nextId++, genome, ...evaluateRoads(genome), parents };
   }
 
-  // What we remember about each generation: class counts, the best score and its length (null: not all cities connected).
+  // What we remember about each generation: class counts, the best score and its cost
+  // (= length unless the mode is 'routes'; null: not all cities connected).
   snapshot() {
     const best = this.best();
-    return { counts: this.counts.slice(), best: this.bestScore, length: best.connected ? best.length : null };
+    return { counts: this.counts.slice(), best: this.bestScore, cost: best.connected ? best.cost : null };
   }
 
   get generation() {
@@ -87,6 +88,16 @@ class Evolution {
       return `достигнут предел в ${rules.maxGenerations} поколений`;
     }
     return null;
+  }
+
+  // The goal changed (the trip weight in the 'routes' mode): score the same networks again.
+  // The genomes stay, only their scores and classes change.
+  rescore() {
+    this.pool = this.pool.map((c) => ({ ...c, ...evaluateRoads(c.genome) }));
+    this.counts.fill(0);
+    for (const c of this.pool) this.counts[c.cls]++;
+    this.bestScore = Math.max(...this.pool.map((c) => c.score));
+    this.lastImprovementAt = this.matings;
   }
 
   best() {

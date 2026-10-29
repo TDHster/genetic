@@ -17,11 +17,19 @@
 // In the 'roads' mode (TASK.mode) the roads come from the genome instead of the MST. Then a network
 // can leave cities unconnected, and it can have extra roads (rings, dead ends) that only add length.
 //
+// In the 'routes' mode (roads also from the genome) the goal is not only short roads but also short TRIPS.
+// The COST of a network = L + k · (average shortest path by road between two cities), k = TASK.tripWeight.
+// k = 0: only building counts, the answer is the Steiner tree. The bigger k, the more a direct road
+// between cities is worth: rings and chords appear, trips get shorter, the roads get longer.
+// (Without the building cost the best would be a direct road between every pair of cities.)
+// In the other modes the cost is just the length L.
+//
 // SCORE:
-//   - not all cities are connected (only possible in the 'roads' mode): the share of cities
+//   - not all cities are connected (only possible when the roads are in the genome): the share of cities
 //     in the largest connected piece of the network, 0..1;
-//   - all connected: 1 + L_MST / L. 2 means "as long as the MST", above 2 - shorter.
-// So any connected network beats any broken one, and among connected ones the shorter wins.
+//   - all connected: 1 + C_MST / C, where C_MST is the cost of the MST of the cities.
+//     2 means "as good as the MST", above 2 - better.
+// So any connected network beats any broken one, and among connected ones the cheaper wins.
 // A junction with 1 road only adds a dead end, with 2 roads - a bend; both are useless,
 // but they do not break the network: the score simply counts their length.
 
@@ -91,7 +99,10 @@ function exactJunctions() {
 const STEINER_RATIO = Math.sqrt(3) / 2;
 
 // Classes: broken network, then three by length, the last two by the shape of the answer.
-const CLASS_NAMES = ['не все города связаны', 'длиннее остова', 'как остов', 'короче остова', 'короче, все развилки под 120°', 'точный ответ'];
+// The 'routes' mode has its own classes (setTask picks them): there the shape that matters is rings.
+const TREE_CLASSES = ['не все города связаны', 'длиннее остова', 'как остов', 'короче остова', 'короче, все развилки под 120°', 'точный ответ'];
+const ROUTE_CLASSES = ['не все города связаны', 'хуже остова', 'как остов', 'лучше остова: дерево', 'лучше остова: с кольцами'];
+let CLASS_NAMES = TREE_CLASSES;
 const CLASS_COLORS = ['#3a1020', '#1b2a6b', '#7a3b8f', '#3fd0d6', '#3fbf5f', '#f0c040'];
 const SAME_LENGTH = 1e-4; // within 0.01% counts as "the same length" (rounding, a junction on a straight road)
 
@@ -103,17 +114,28 @@ function setTask(task) {
   CITIES.length = 0;
   CITIES.push(...makeCities(TASK));
   resetJunctionIds();
+  CLASS_NAMES = TASK.mode === 'routes' ? ROUTE_CLASSES : TREE_CLASSES;
   // The MST first: scores and classes are measured against it.
   const m = mst(CITIES);
-  REFS.mst = { key: 'mst', name: 'остов без развилок', junctionInfo: [], length: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
+  REFS.mst = { key: 'mst', name: 'остов без развилок', nodes: CITIES.slice(), junctionInfo: [], length: m.length, edges: m.edges,
+    connected: true, share: 1, extra: 0 };
+  Object.assign(REFS.mst, networkCost(REFS.mst));
   REFS.bound = { length: STEINER_RATIO * m.length };
   delete REFS.exact;
-  const exact = exactJunctions();
-  // References are always MST-based networks, whatever the mode.
+  // The exact Steiner tree is the answer only when the length alone counts.
+  const exact = TASK.mode === 'routes' ? null : exactJunctions();
   if (exact) REFS.exact = { key: 'exact', name: 'точный ответ', ...evaluateTree({ junctions: exact }) };
   // Classes need the exact length, so classify the references after it is known.
-  Object.assign(REFS.mst, classify({ connected: true, length: m.length, junctionInfo: [] }));
+  Object.assign(REFS.mst, classify(REFS.mst));
   if (REFS.exact) Object.assign(REFS.exact, classify(REFS.exact));
+}
+
+// The trip weight k can change during a run (the slider): the MST cost and the classes of the references
+// change with it. The pool is re-scored by Evolution.rescore().
+function setTripWeight(k) {
+  TASK.tripWeight = k;
+  Object.assign(REFS.mst, networkCost(REFS.mst));
+  Object.assign(REFS.mst, classify(REFS.mst));
 }
 
 // Length of a reference, Infinity if there is none.
@@ -121,14 +143,63 @@ function refLength(key) {
   return REFS[key] ? REFS[key].length : Infinity;
 }
 
+// Cost of a reference (= length unless the mode is 'routes'), Infinity if there is none.
+function refCost(key) {
+  return REFS[key] ? REFS[key].cost : Infinity;
+}
+
 // Gain over the MST: 0.05 = 5% shorter, negative = longer.
 function gainOverMst(length) {
   return 1 - length / REFS.mst.length;
 }
 
-// net: { connected, share, length, junctionInfo: junctionStats(...) }.
+// Cost of a connected network: the length, plus k · average trip in the 'routes' mode.
+// Returns { cost, trip, detour }: trip - average shortest path between two cities by road,
+// detour - average of (path by road / straight line), 1 = every trip goes straight.
+function networkCost(net) {
+  if (TASK.mode !== 'routes') return { cost: net.length };
+  const { trip, detour } = tripStats(net);
+  return { cost: net.length + TASK.tripWeight * trip, trip, detour };
+}
+
+// Shortest paths by road from every city to every other one (Dijkstra, O(V²) per city).
+function tripStats(net) {
+  const n = CITIES.length, V = net.nodes.length;
+  const adj = net.nodes.map(() => []);
+  for (const [i, j] of net.edges) {
+    const d = Math.hypot(net.nodes[i].x - net.nodes[j].x, net.nodes[i].y - net.nodes[j].y);
+    adj[i].push(j, d); adj[j].push(i, d);
+  }
+  let sum = 0, detour = 0, pairs = 0;
+  const dist = new Float64Array(V), done = new Uint8Array(V);
+  for (let s = 0; s < n - 1; s++) {
+    dist.fill(Infinity); done.fill(0); dist[s] = 0;
+    for (let step = 0; step < V; step++) {
+      let u = -1;
+      for (let i = 0; i < V; i++) if (!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
+      if (dist[u] === Infinity) break;
+      done[u] = 1;
+      const a = adj[u];
+      for (let k = 0; k < a.length; k += 2) if (dist[u] + a[k + 1] < dist[a[k]]) dist[a[k]] = dist[u] + a[k + 1];
+    }
+    for (let t = s + 1; t < n; t++) {
+      sum += dist[t];
+      detour += dist[t] / Math.hypot(CITIES[s].x - CITIES[t].x, CITIES[s].y - CITIES[t].y);
+      pairs++;
+    }
+  }
+  return { trip: sum / pairs, detour: detour / pairs };
+}
+
+// net: { connected, share, length, cost, extra, junctionInfo: junctionStats(...) }.
 function classify(net) {
   if (!net.connected) return { cls: 0, score: net.share };
+  const score = 1 + REFS.mst.cost / net.cost;
+  if (TASK.mode === 'routes') {
+    const gain = 1 - net.cost / REFS.mst.cost;
+    const cls = gain < -SAME_LENGTH ? 1 : gain < SAME_LENGTH ? 2 : net.extra ? 4 : 3;
+    return { cls, score };
+  }
   const gain = gainOverMst(net.length);
   let cls;
   if (REFS.exact && net.length <= REFS.exact.length * (1 + SAME_LENGTH)) cls = 5;
@@ -136,23 +207,23 @@ function classify(net) {
   else if (gain < SAME_LENGTH) cls = 2;
   else if (net.junctionInfo.every((j) => j.useless || j.at120)) cls = 4;
   else cls = 3;
-  return { cls, score: 1 + REFS.mst.length / net.length };
+  return { cls, score };
 }
 
 function evaluateRoads(genome) {
-  return TASK.mode === 'roads' ? evaluateFree(genome) : evaluateTree(genome);
+  return roadsInGenome() ? evaluateFree(genome) : evaluateTree(genome);
 }
 
 // 'tree' mode: the roads are the MST of cities + junctions.
 function evaluateTree(genome) {
   const nodes = CITIES.concat(genome.junctions);
   const m = mst(nodes);
-  const net = { nodes, length: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
+  const net = { nodes, length: m.length, cost: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
   net.junctionInfo = junctionStats(net);
   return { ...net, ...classify(net) };
 }
 
-// 'roads' mode: the roads are taken from the genome as they are.
+// 'roads' and 'routes' modes: the roads are taken from the genome as they are.
 function evaluateFree(genome) {
   const n = CITIES.length;
   const nodes = CITIES.concat(genome.junctions);
@@ -178,6 +249,8 @@ function evaluateFree(genome) {
   for (const [root, count] of citiesIn) if (count > largest) { largest = count; main = root; }
   const linked = CITIES.map((_, i) => find(i) === main);
   const net = { nodes, length, edges, connected: largest === n, share: largest / n, extra, linked };
+  // Trips are counted only when every city can be reached.
+  if (net.connected) Object.assign(net, networkCost(net));
   net.junctionInfo = junctionStats(net);
   return { ...net, ...classify(net) };
 }

@@ -24,10 +24,17 @@ function readConfig() {
     task: {
       map: $('cfg-map').value,
       mode: $('cfg-mode').value,
+      tripWeight: tripWeight(),
       cities: Math.min(50, Math.max(3, Math.round(Number($('cfg-cities').value) || 20))),
       mapSeed: Number($('cfg-map-seed').value) || 1,
     },
   };
+}
+
+// The trip weight slider: a log-like scale, k = 0 means "only building counts".
+const TRIP_WEIGHTS = [0, 1, 3, 10, 30, 100, 300];
+function tripWeight() {
+  return TRIP_WEIGHTS[Number($('cfg-trip').value)];
 }
 
 function readStopRules() {
@@ -51,6 +58,9 @@ function reset() {
   if (!REFS.exact && $('view-source').value === 'exact') $('view-source').value = 'best';
   $('cfg-cities').disabled = TASK.map !== 'random';
   $('cfg-map-seed').disabled = TASK.map !== 'random';
+  $('cfg-trip').disabled = TASK.mode !== 'routes';
+  // The classes depend on the mode.
+  $('chart-legend').innerHTML = CLASS_NAMES.map((n, i) => `<span style="--c:${CLASS_COLORS[i]}">${n}</span>`).join('');
   refreshPanels(true);
 }
 
@@ -132,10 +142,12 @@ function drawStats() {
   $('stats').innerHTML =
     `Seed <b>${evo.cfg.seed}</b> · поколение <b>${evo.generation.toFixed(1)}</b> · спариваний <b>${evo.matings.toLocaleString('ru')}</b>` +
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
-    (best.connected
-      ? ` · лучшая сеть <b>${km(best.length)}</b> (короче остова на ${pct(gainOverMst(best.length))}` +
-        (REFS.exact ? `; точный ответ ${km(REFS.exact.length)}` : '') + ')'
-      : ` · лучшая сеть связывает только <b>${Math.round(best.share * 100)}%</b> городов`) +
+    (!best.connected ? ` · лучшая сеть связывает только <b>${Math.round(best.share * 100)}%</b> городов`
+      : TASK.mode === 'routes'
+        ? ` · лучшая сеть: стоимость <b>${best.cost.toFixed(0)}</b> (остов ${REFS.mst.cost.toFixed(0)}), дороги ${km(best.length)}, ` +
+          `средняя поездка ${km(best.trip)}`
+        : ` · лучшая сеть <b>${km(best.length)}</b> (короче остова на ${pct(gainOverMst(best.length))}` +
+          (REFS.exact ? `; точный ответ ${km(REFS.exact.length)}` : '') + ')') +
     ` · без улучшений ${Math.floor(evo.generationsWithoutImprovement)} пок.` +
     (state.stopReason ? ` · <span class="stopped">Остановлено: ${state.stopReason}` +
       (state.autoStopOff ? ' (продолжаю без автостопа до «Сброс»)' : '') + '</span>' : '');
@@ -156,7 +168,9 @@ function drawNetInfo() {
     `длина дорог <b>${km(net.length)}</b> · дорог ${net.edges.length}` +
     (net.extra ? ` (лишних в кольцах ${net.extra})` : '') +
     ` · развилок ${j.all} (полезных ${j.useful}, под 120° ${j.at120})` +
-    (net.connected ? '' : ` · <span class="bad">связано ${Math.round(net.share * 100)}% городов</span>`) + '</div>';
+    (!net.connected ? ` · <span class="bad">связано ${Math.round(net.share * 100)}% городов</span>`
+      : TASK.mode === 'routes' ? ` · средняя поездка <b>${km(net.trip)}</b>, крюк ×${net.detour.toFixed(2)} · стоимость <b>${net.cost.toFixed(1)}</b>` : '') +
+    '</div>';
 }
 
 function drawScoreInfo() {
@@ -189,6 +203,10 @@ function drawScoreInfo() {
       'Любая связная сеть получает больше единицы, поэтому сначала эволюция учится связывать все города, а уже потом — укорачивать дороги.';
     return;
   }
+  if (TASK.mode === 'routes') {
+    drawRouteScore(net);
+    return;
+  }
   $('score-info').innerHTML =
     '<table class="score-table"><tr><th>Сеть</th><th>Длина</th><th>Короче остова</th><th>Полезных развилок</th><th>Под 120°</th></tr>' +
     rows.join('') + '</table>' +
@@ -196,12 +214,29 @@ function drawScoreInfo() {
     `<p class="note">${exactNote}</p>`;
 }
 
+// 'routes' mode: building against trips.
+function drawRouteScore(net) {
+  const k = TASK.tripWeight;
+  const row = (r, name) => `<tr><td>${name}</td><td>${km(r.length)}</td><td>${km(r.trip)}</td><td>×${r.detour.toFixed(3)}</td>` +
+    `<td>${r.edges.length}</td><td><b>${r.cost.toFixed(1)}</b></td></tr>`;
+  $('score-info').innerHTML =
+    '<table class="score-table"><tr><th>Сеть</th><th>Длина дорог L</th><th>Средняя поездка T</th><th>Средний крюк</th><th>Дорог</th><th>Стоимость L + k·T</th></tr>' +
+    (net === REFS.mst ? '' : row(net, '<b>эта сеть</b>')) + row(REFS.mst, REFS.mst.name) + '</table>' +
+    `<div class="formula">стоимость = L + k·T = ${net.length.toFixed(1)} + ${k} × ${net.trip.toFixed(2)} = ${net.cost.toFixed(1)}; ` +
+    `оценка = 1 + C<sub>остова</sub> / C = 1 + ${REFS.mst.cost.toFixed(1)} / ${net.cost.toFixed(1)} = <b>${net.score.toFixed(4)}</b></div>` +
+    '<p class="note">T — среднее по всем парам городов: кратчайший путь по дорогам из одного в другой. Крюк — во сколько раз путь ' +
+    'по дорогам длиннее прямой (×1 — дорога прямо). k — во сколько раз километр средней поездки важнее километра стройки. ' +
+    'При k = 0 ответ — дерево Штейнера, с ростом k появляются кольца и прямые дороги между соседями, поездки короче, дорог больше. ' +
+    'Без стоимости стройки лучшей была бы прямая дорога между каждой парой городов. ' +
+    'Правило 120° здесь уже не обязано выполняться: развилку тянут к себе и стройка, и поездки.</p>';
+}
+
 // The genome as a table: every junction, its roads and the angles between them.
 function drawGenome() {
   const net = state.shown;
   const stats = net.junctionInfo;
   if (!stats.length) {
-    $('genome-info').innerHTML = roadsNote(net) + (TASK.mode === 'roads' || net.key
+    $('genome-info').innerHTML = roadsNote(net) + (roadsInGenome() || net.key
       ? '<p class="note">Развилок нет: дороги идут только от города к городу.</p>'
       : '<p class="note">Развилок нет: дороги идут только от города к городу, и сеть — это остов.</p>');
     return;
@@ -221,13 +256,14 @@ function drawGenome() {
 // What the genome says about roads: in the 'roads' mode they are in the genome, in the 'tree' mode - computed.
 function roadsNote(net) {
   if (net.key) return '';
-  return TASK.mode === 'roads'
+  return roadsInGenome()
     ? `<p class="note">Дороги — тоже часть генома: ${net.genome.roads.length} пар узлов, которые соединены дорогой.</p>`
     : '<p class="note">В геноме только развилки, дороги между узлами строит алгоритм Прима (остов).</p>';
 }
 
 function describeStep(s) {
-  const size = (c) => (c.connected ? km(c.length) : `связано ${Math.round(c.share * 100)}% городов`);
+  const size = (c) => (!c.connected ? `связано ${Math.round(c.share * 100)}% городов`
+    : TASK.mode === 'routes' ? `стоимость ${c.cost.toFixed(1)} (дороги ${km(c.length)}, поездка ${km(c.trip)})` : km(c.length));
   const roads = (c) => (c.genome.roads ? `, дорог ${c.genome.roads.length}` : '');
   const line = (label, c) => `${label} #${c.id}: ${CLASS_NAMES[c.cls]}, ${size(c)}, развилок ${c.genome.junctions.length}${roads(c)}, оценка ${c.score.toFixed(4)}`;
   return [
@@ -237,7 +273,7 @@ function describeStep(s) {
     '  ' + line('3.', s.loser) + '  ← погибает',
     '',
     `Скрещивание #${s.mom.id} × #${s.dad.id}: карту режет случайная прямая, развилки` +
-      (TASK.mode === 'roads' ? ' и дороги' : '') + ' с одной стороны от первой сети, с другой — от второй.',
+      (roadsInGenome() ? ' и дороги' : '') + ' с одной стороны от первой сети, с другой — от второй.',
     'Мутация: ' + s.mutations.join('; '),
     '',
     line('Потомок', s.child) + ` — занимает место #${s.loser.id}`,
@@ -274,10 +310,17 @@ $('btn-gen').onclick = () => {
 // The map changes the task: apply at once, there is nothing to keep.
 $('cfg-map').onchange = () => { setRunning(false); reset(); };
 $('cfg-mode').onchange = () => { setRunning(false); reset(); };
+// The trip weight changes on the fly: the same pool is scored again, evolution goes on towards the new goal.
+$('cfg-trip').oninput = () => {
+  $('cfg-trip-out').textContent = `k = ${tripWeight()}`;
+  if (TASK.mode !== 'routes') return;
+  setTripWeight(tripWeight());
+  state.evo.rescore();
+  state.stopReason = null;
+  refreshPanels(true);
+};
 $('view-source').onchange = () => refreshPanels(true);
 $('show-mst').onchange = () => refreshPanels(true);
-
-$('chart-legend').innerHTML = CLASS_NAMES.map((n, i) => `<span style="--c:${CLASS_COLORS[i]}">${n}</span>`).join('');
 
 reset();
 requestAnimationFrame(frame);
