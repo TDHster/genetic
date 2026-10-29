@@ -23,6 +23,7 @@ function readConfig() {
     mutationsPerChild: Math.max(1, Number($('cfg-mut').value) || 1),
     task: {
       map: $('cfg-map').value,
+      mode: $('cfg-mode').value,
       cities: Math.min(50, Math.max(3, Math.round(Number($('cfg-cities').value) || 20))),
       mapSeed: Number($('cfg-map-seed').value) || 1,
     },
@@ -131,8 +132,10 @@ function drawStats() {
   $('stats').innerHTML =
     `Seed <b>${evo.cfg.seed}</b> · поколение <b>${evo.generation.toFixed(1)}</b> · спариваний <b>${evo.matings.toLocaleString('ru')}</b>` +
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
-    ` · лучшая сеть <b>${km(best.length)}</b> (короче остова на ${pct(gainOverMst(best.length))}` +
-    (REFS.exact ? `; точный ответ ${km(REFS.exact.length)}` : '') + ')' +
+    (best.connected
+      ? ` · лучшая сеть <b>${km(best.length)}</b> (короче остова на ${pct(gainOverMst(best.length))}` +
+        (REFS.exact ? `; точный ответ ${km(REFS.exact.length)}` : '') + ')'
+      : ` · лучшая сеть связывает только <b>${Math.round(best.share * 100)}%</b> городов`) +
     ` · без улучшений ${Math.floor(evo.generationsWithoutImprovement)} пок.` +
     (state.stopReason ? ` · <span class="stopped">Остановлено: ${state.stopReason}` +
       (state.autoStopOff ? ' (продолжаю без автостопа до «Сброс»)' : '') + '</span>' : '');
@@ -150,7 +153,10 @@ function drawNetInfo() {
     : `Сеть #${net.id} (${net.parents ? `потомок #${net.parents[0]} и #${net.parents[1]}` : 'из случайного начального пула'})`;
   const j = junctionCounts(net);
   $('net-info').innerHTML = `<div>${who} · класс: <b>${CLASS_NAMES[net.cls]}</b> · оценка <b>${net.score.toFixed(4)}</b> · ` +
-    `длина дорог <b>${km(net.length)}</b> · развилок ${j.all} (полезных ${j.useful}, под 120° ${j.at120})</div>`;
+    `длина дорог <b>${km(net.length)}</b> · дорог ${net.edges.length}` +
+    (net.extra ? ` (лишних в кольцах ${net.extra})` : '') +
+    ` · развилок ${j.all} (полезных ${j.useful}, под 120° ${j.at120})` +
+    (net.connected ? '' : ` · <span class="bad">связано ${Math.round(net.share * 100)}% городов</span>`) + '</div>';
 }
 
 function drawScoreInfo() {
@@ -176,10 +182,17 @@ function drawScoreInfo() {
     random: 'Для случайных городов точный ответ неизвестен: задача Штейнера NP-трудная. ' +
       'Известно только, что короче √3/2 ≈ 86,6% остова не бывает; на практике выигрыш у остова — 2–5%.',
   }[TASK.map];
+  if (!net.connected) {
+    const left = CITIES.length - Math.round(net.share * CITIES.length);
+    $('score-info').innerHTML = `Не все города связаны: в самой большой связной части сети ${Math.round(net.share * CITIES.length)} ` +
+      `из ${CITIES.length} городов, ещё ${left} отрезаны (красные). Оценка = доля связанных = <b>${net.score.toFixed(3)}</b>. ` +
+      'Любая связная сеть получает больше единицы, поэтому сначала эволюция учится связывать все города, а уже потом — укорачивать дороги.';
+    return;
+  }
   $('score-info').innerHTML =
     '<table class="score-table"><tr><th>Сеть</th><th>Длина</th><th>Короче остова</th><th>Полезных развилок</th><th>Под 120°</th></tr>' +
     rows.join('') + '</table>' +
-    `<div class="formula">оценка = L<sub>остова</sub> / L = ${REFS.mst.length.toFixed(2)} / ${net.length.toFixed(2)} = <b>${net.score.toFixed(4)}</b></div>` +
+    `<div class="formula">оценка = 1 + L<sub>остова</sub> / L = 1 + ${REFS.mst.length.toFixed(2)} / ${net.length.toFixed(2)} = <b>${net.score.toFixed(4)}</b></div>` +
     `<p class="note">${exactNote}</p>`;
 }
 
@@ -188,7 +201,9 @@ function drawGenome() {
   const net = state.shown;
   const stats = net.junctionInfo;
   if (!stats.length) {
-    $('genome-info').innerHTML = '<p class="note">Развилок нет: дороги идут только от города к городу, и сеть — это остов.</p>';
+    $('genome-info').innerHTML = roadsNote(net) + (TASK.mode === 'roads' || net.key
+      ? '<p class="note">Развилок нет: дороги идут только от города к городу.</p>'
+      : '<p class="note">Развилок нет: дороги идут только от города к городу, и сеть — это остов.</p>');
     return;
   }
   let html = '<table><tr><th>Развилка</th><th>x</th><th>y</th><th>Дорог</th><th>Углы между дорогами</th></tr>';
@@ -199,19 +214,30 @@ function drawGenome() {
     html += `<tr${cls}><td>${k + 1}</td><td>${s.p.x.toFixed(1)}</td><td>${s.p.y.toFixed(1)}</td><td>${s.degree}</td>` +
       `<td>${note || angles}</td></tr>`;
   });
-  $('genome-info').innerHTML = html + '</table><p class="note">Зелёные — три дороги под 120°, как в точном ответе. ' +
+  $('genome-info').innerHTML = roadsNote(net) + html + '</table><p class="note">Зелёные — три дороги под 120°, как в точном ответе. ' +
     'Серые — лишние: тупик или изгиб на две дороги только удлиняют сеть, но и не ломают её. Координаты в км.</p>';
 }
 
+// What the genome says about roads: in the 'roads' mode they are in the genome, in the 'tree' mode - computed.
+function roadsNote(net) {
+  if (net.key) return '';
+  return TASK.mode === 'roads'
+    ? `<p class="note">Дороги — тоже часть генома: ${net.genome.roads.length} пар узлов, которые соединены дорогой.</p>`
+    : '<p class="note">В геноме только развилки, дороги между узлами строит алгоритм Прима (остов).</p>';
+}
+
 function describeStep(s) {
-  const line = (label, c) => `${label} #${c.id}: ${CLASS_NAMES[c.cls]}, ${km(c.length)}, развилок ${c.genome.junctions.length}, оценка ${c.score.toFixed(4)}`;
+  const size = (c) => (c.connected ? km(c.length) : `связано ${Math.round(c.share * 100)}% городов`);
+  const roads = (c) => (c.genome.roads ? `, дорог ${c.genome.roads.length}` : '');
+  const line = (label, c) => `${label} #${c.id}: ${CLASS_NAMES[c.cls]}, ${size(c)}, развилок ${c.genome.junctions.length}${roads(c)}, оценка ${c.score.toFixed(4)}`;
   return [
     'Из пула случайно взяли три сети и отсортировали по оценке:',
     '  ' + line('1.', s.mom),
     '  ' + line('2.', s.dad),
     '  ' + line('3.', s.loser) + '  ← погибает',
     '',
-    `Скрещивание #${s.mom.id} × #${s.dad.id}: карту режет случайная прямая, развилки с одной стороны от первой сети, с другой — от второй.`,
+    `Скрещивание #${s.mom.id} × #${s.dad.id}: карту режет случайная прямая, развилки` +
+      (TASK.mode === 'roads' ? ' и дороги' : '') + ' с одной стороны от первой сети, с другой — от второй.',
     'Мутация: ' + s.mutations.join('; '),
     '',
     line('Потомок', s.child) + ` — занимает место #${s.loser.id}`,
@@ -247,6 +273,7 @@ $('btn-gen').onclick = () => {
 };
 // The map changes the task: apply at once, there is nothing to keep.
 $('cfg-map').onchange = () => { setRunning(false); reset(); };
+$('cfg-mode').onchange = () => { setRunning(false); reset(); };
 $('view-source').onchange = () => refreshPanels(true);
 $('show-mst').onchange = () => refreshPanels(true);
 

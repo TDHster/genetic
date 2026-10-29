@@ -14,6 +14,7 @@ const COLORS = {
   exact: '#f0c040',
   bound: '#ff6b5e',
   text: '#9aa6c7',
+  unlinked: '#ff6b5e',
 };
 
 // The world-to-canvas mapping for the map.
@@ -78,13 +79,15 @@ function drawMap(ctx, net, w, h, showMst) {
   ctx.lineWidth = 2;
   ctx.strokeStyle = COLORS.cityEdge;
   ctx.fillStyle = COLORS.city;
-  for (const c of CITIES) {
+  CITIES.forEach((c, i) => {
+    // A city not connected to the main piece of the network: red.
+    ctx.fillStyle = net.linked && !net.linked[i] ? COLORS.unlinked : COLORS.city;
     ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), 6, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-  }
+  });
 
   ctx.font = '13px system-ui, sans-serif';
   ctx.fillStyle = COLORS.text;
-  ctx.fillText(`${net.length.toFixed(2)} км`, 10, 18);
+  ctx.fillText(`${net.length.toFixed(2)} км` + (net.connected ? '' : ` · связано ${Math.round(net.share * 100)}% городов`), 10, 18);
   ctx.restore();
 }
 
@@ -116,10 +119,13 @@ function drawPopulationChart(ctx, history, w, h) {
   }
 
   // Length axis (right): the gain over the MST is a few percent, so the axis spans only
-  // from a bit below the best (or the exact answer) to a bit above the MST.
+  // from a bit below the best (or the exact answer) to a bit above the MST - at most 30% above,
+  // longer networks (the random tangle at the start) are drawn at the top edge.
+  // null = not all cities connected yet: no length to draw.
   const mstL = refLength('mst');
-  const lo = Math.min(...history.map((r) => r.length), refLength('exact')) - 0.01 * mstL;
-  const hi = Math.max(mstL, history[0].length) + 0.01 * mstL;
+  const lengths = history.map((r) => r.length).filter((l) => l !== null);
+  const lo = Math.min(...lengths, refLength('exact'), mstL) - 0.01 * mstL;
+  const hi = Math.min(Math.max(mstL, ...lengths), 1.3 * mstL) + 0.01 * mstL;
   const sy = (l) => pad.t + ph * (1 - (Math.min(hi, l) - lo) / (hi - lo));
 
   ctx.font = '11px system-ui, sans-serif';
@@ -133,9 +139,11 @@ function drawPopulationChart(ctx, history, w, h) {
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 2;
   ctx.beginPath();
+  let started = false;
   history.forEach((r, i) => {
+    if (r.length === null) return;
     const x = pad.l + (i / (n - 1)) * pw;
-    if (i) ctx.lineTo(x, sy(r.length)); else ctx.moveTo(x, sy(r.length));
+    if (started) ctx.lineTo(x, sy(r.length)); else { ctx.moveTo(x, sy(r.length)); started = true; }
   });
   ctx.stroke();
   ctx.lineWidth = 1;

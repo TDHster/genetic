@@ -31,9 +31,10 @@ class Evolution {
     return { id: this.nextId++, genome, ...evaluateRoads(genome), parents };
   }
 
-  // What we remember about each generation: class counts, the best score and its length.
+  // What we remember about each generation: class counts, the best score and its length (null: not all cities connected).
   snapshot() {
-    return { counts: this.counts.slice(), best: this.bestScore, length: this.best().length };
+    const best = this.best();
+    return { counts: this.counts.slice(), best: this.bestScore, length: best.connected ? best.length : null };
   }
 
   get generation() {
@@ -75,7 +76,7 @@ class Evolution {
   // rules: { nearExact: 0.001 (allowed gap to the exact answer, fraction), stagnation: 200, maxGenerations: 2000 }; 0 = off.
   stopReason(rules) {
     const best = this.best();
-    if (rules.nearExact && REFS.exact && best.length <= REFS.exact.length * (1 + rules.nearExact)) {
+    if (rules.nearExact && REFS.exact && best.connected && best.length <= REFS.exact.length * (1 + rules.nearExact)) {
       const gap = (best.length / REFS.exact.length - 1) * 100;
       return `цель достигнута: лучшая сеть длиннее точного ответа всего на ${Math.max(0, gap).toFixed(3)}%`;
     }

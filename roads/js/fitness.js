@@ -14,7 +14,14 @@
 //   - it is never shorter than √3/2 ≈ 0.866 of the MST (the Steiner ratio), so the gain is at most 13.4%;
 //   - finding it is hard (NP-hard): no fast exact method is known for many cities.
 //
-// SCORE = L_MST / L: 1 means "as long as the MST", above 1 - shorter.
+// In the 'roads' mode (TASK.mode) the roads come from the genome instead of the MST. Then a network
+// can leave cities unconnected, and it can have extra roads (rings, dead ends) that only add length.
+//
+// SCORE:
+//   - not all cities are connected (only possible in the 'roads' mode): the share of cities
+//     in the largest connected piece of the network, 0..1;
+//   - all connected: 1 + L_MST / L. 2 means "as long as the MST", above 2 - shorter.
+// So any connected network beats any broken one, and among connected ones the shorter wins.
 // A junction with 1 road only adds a dead end, with 2 roads - a bend; both are useless,
 // but they do not break the network: the score simply counts their length.
 
@@ -83,9 +90,9 @@ function exactJunctions() {
 
 const STEINER_RATIO = Math.sqrt(3) / 2;
 
-// Classes: the first three by length, the last two by the shape of the answer.
-const CLASS_NAMES = ['длиннее остова', 'как остов', 'короче остова', 'короче, все развилки под 120°', 'точный ответ'];
-const CLASS_COLORS = ['#1b2a6b', '#7a3b8f', '#3fd0d6', '#3fbf5f', '#f0c040'];
+// Classes: broken network, then three by length, the last two by the shape of the answer.
+const CLASS_NAMES = ['не все города связаны', 'длиннее остова', 'как остов', 'короче остова', 'короче, все развилки под 120°', 'точный ответ'];
+const CLASS_COLORS = ['#3a1020', '#1b2a6b', '#7a3b8f', '#3fd0d6', '#3fbf5f', '#f0c040'];
 const SAME_LENGTH = 1e-4; // within 0.01% counts as "the same length" (rounding, a junction on a straight road)
 
 // References, recomputed by setTask(): the MST of the cities, the lower bound, the exact answer if known.
@@ -95,15 +102,17 @@ function setTask(task) {
   Object.assign(TASK, task);
   CITIES.length = 0;
   CITIES.push(...makeCities(TASK));
+  resetJunctionIds();
   // The MST first: scores and classes are measured against it.
   const m = mst(CITIES);
-  REFS.mst = { key: 'mst', name: 'остов без развилок', junctionInfo: [], length: m.length, edges: m.edges };
+  REFS.mst = { key: 'mst', name: 'остов без развилок', junctionInfo: [], length: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
   REFS.bound = { length: STEINER_RATIO * m.length };
   delete REFS.exact;
   const exact = exactJunctions();
-  if (exact) REFS.exact = { key: 'exact', name: 'точный ответ', ...evaluateRoads({ junctions: exact }) };
+  // References are always MST-based networks, whatever the mode.
+  if (exact) REFS.exact = { key: 'exact', name: 'точный ответ', ...evaluateTree({ junctions: exact }) };
   // Classes need the exact length, so classify the references after it is known.
-  Object.assign(REFS.mst, classify({ length: m.length, junctionInfo: [] }));
+  Object.assign(REFS.mst, classify({ connected: true, length: m.length, junctionInfo: [] }));
   if (REFS.exact) Object.assign(REFS.exact, classify(REFS.exact));
 }
 
@@ -117,22 +126,58 @@ function gainOverMst(length) {
   return 1 - length / REFS.mst.length;
 }
 
-// net: { length, junctionInfo: junctionStats(...) }.
+// net: { connected, share, length, junctionInfo: junctionStats(...) }.
 function classify(net) {
+  if (!net.connected) return { cls: 0, score: net.share };
   const gain = gainOverMst(net.length);
   let cls;
-  if (REFS.exact && net.length <= REFS.exact.length * (1 + SAME_LENGTH)) cls = 4;
-  else if (gain < -SAME_LENGTH) cls = 0;
-  else if (gain < SAME_LENGTH) cls = 1;
-  else if (net.junctionInfo.every((j) => j.useless || j.at120)) cls = 3;
-  else cls = 2;
-  return { cls, score: REFS.mst.length / net.length };
+  if (REFS.exact && net.length <= REFS.exact.length * (1 + SAME_LENGTH)) cls = 5;
+  else if (gain < -SAME_LENGTH) cls = 1;
+  else if (gain < SAME_LENGTH) cls = 2;
+  else if (net.junctionInfo.every((j) => j.useless || j.at120)) cls = 4;
+  else cls = 3;
+  return { cls, score: 1 + REFS.mst.length / net.length };
 }
 
 function evaluateRoads(genome) {
+  return TASK.mode === 'roads' ? evaluateFree(genome) : evaluateTree(genome);
+}
+
+// 'tree' mode: the roads are the MST of cities + junctions.
+function evaluateTree(genome) {
   const nodes = CITIES.concat(genome.junctions);
   const m = mst(nodes);
-  const net = { nodes, length: m.length, edges: m.edges };
+  const net = { nodes, length: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
+  net.junctionInfo = junctionStats(net);
+  return { ...net, ...classify(net) };
+}
+
+// 'roads' mode: the roads are taken from the genome as they are.
+function evaluateFree(genome) {
+  const n = CITIES.length;
+  const nodes = CITIES.concat(genome.junctions);
+  const index = new Map(genome.junctions.map((j, k) => [j.id, n + k]));
+  const at = (key) => (key < n ? key : index.get(key));
+  // Union-find: which nodes are connected to which.
+  const parent = nodes.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+  const edges = [];
+  let length = 0, extra = 0;
+  for (const [a, b] of genome.roads) {
+    const i = at(a), j = at(b);
+    length += Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+    edges.push([i, j]);
+    const ri = find(i), rj = find(j);
+    if (ri === rj) extra++; // closes a ring: some road of the ring is not needed
+    else parent[ri] = rj;
+  }
+  // The largest piece by the number of cities in it.
+  const citiesIn = new Map();
+  for (let i = 0; i < n; i++) citiesIn.set(find(i), (citiesIn.get(find(i)) || 0) + 1);
+  let main = -1, largest = 0;
+  for (const [root, count] of citiesIn) if (count > largest) { largest = count; main = root; }
+  const linked = CITIES.map((_, i) => find(i) === main);
+  const net = { nodes, length, edges, connected: largest === n, share: largest / n, extra, linked };
   net.junctionInfo = junctionStats(net);
   return { ...net, ...classify(net) };
 }
