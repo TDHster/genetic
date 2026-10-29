@@ -1,6 +1,6 @@
 # genetic — учебные проекты: генетический алгоритм проектирует механизмы
 
-Один git-репозиторий (https://github.com/TDHster/genetic, публичный), пять независимых проектов в подпапках.
+Один git-репозиторий (https://github.com/TDHster/genetic, публичный), шесть независимых проектов в подпапках.
 Сайт: https://genetic.tdhster.workers.dev/ — главная `index.html` с карточками проектов.
 
 ## Архитектура
@@ -16,6 +16,7 @@
 | `builder/` | Самая высокая постройка из неровных камней (физика Rapier, 3D three.js) | только сервер | [builder/CLAUDE.md](builder/CLAUDE.md) |
 | `coast/` | Защита набережной от столетнего шторма (мелкая вода, EurOtop, 3D three.js) | только сервер | [coast/CLAUDE.md](coast/CLAUDE.md) |
 | `vawt/` | Ротор ветряка с вертикальной осью (Дарье; аэродинамика DMST, 3D three.js) | только сервер | [vawt/CLAUDE.md](vawt/CLAUDE.md) |
+| `roof/` | Форма крыши, с которой капля скатывается быстрее всего (брахистохрона; эталон — циклоида) | `file://` или сервер | [roof/CLAUDE.md](roof/CLAUDE.md) |
 
 Типовое устройство проекта: `index.html` + `style.css`, `js/` (rng, геном/модель, fitness, evolution, отрисовка, app),
 `tools/headless.*` — тот же код в Node без браузера (на сайт не попадает). Библиотеки лежат в репо, без CDN:

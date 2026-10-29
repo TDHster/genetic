@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Крыша-брахистохрона</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Крыша-брахистохрона</h1>
+    <p>Генетический алгоритм ищет форму крыши, с которой капля скатывается <b>быстрее всего</b>. Конёк и карниз заданы,
+      форма ската между ними — ломаная, высоты её изломов подбирает эволюция. Это знаменитая задача о брахистохроне
+      (Иоганн Бернулли, 1696): Галилей думал, что быстрее всего дуга окружности, а ответ — <b>циклоида</b>,
+      кривая, которую рисует точка обода катящегося колеса. Найдёт ли её эволюция из случайных зигзагов?
+      В режиме «дождь» капли падают по всей крыше, и ответ уже другой.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="Один турнир: 3 случайные крыши, худшая умирает, две оставшиеся дают потомка">1 спаривание</button>
+      <button id="btn-gen" title="Столько спариваний, сколько крыш в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул крыш
+        <select id="cfg-pop">
+          <option>200</option><option selected>500</option><option>1000</option><option>2000</option>
+        </select>
+      </label>
+      <label>Задача
+        <select id="cfg-rain">
+          <option value="drop" selected>одна капля с конька</option>
+          <option value="rain">дождь по всей крыше</option>
+        </select>
+      </label>
+      <label title="Половина ширины дома: от конька до карниза по горизонтали">Ширина ската <input id="cfg-width" type="number" min="0.5" max="50" step="0.5" value="4"> м</label>
+      <label title="На сколько конёк выше карниза">Высота <input id="cfg-height" type="number" min="0.5" max="50" step="0.5" value="3"> м</label>
+      <label title="Сколько прямых кусков в ломаной; геном — высоты точек между ними">Кусков
+        <select id="cfg-segments">
+          <option>4</option><option>8</option><option>12</option><option selected>16</option><option>24</option><option>32</option>
+        </select>
+      </label>
+      <label title="Ни одна точка крыши не опускается ниже карниза"><input id="cfg-floor" type="checkbox"> не ниже карниза</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label title="Только для одной капли: в дожде циклоида не ответ"><input id="stop-cyc-on" type="checkbox" checked> медленнее циклоиды не больше чем на
+        <input id="stop-cyc" type="number" min="0" step="any" value="0"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="200"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="2000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучшая крыша в пуле</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последняя погибшая</option>
+            <option value="line">Прямой скат (эталон)</option>
+            <option value="arc">Дуга Галилея (эталон)</option>
+            <option value="cycloid">Циклоида (эталон)</option>
+          </select>
+        </h2>
+        <label class="inline-check"><input id="show-refs" type="checkbox" checked> гонка с эталонами</label>
+        <label class="inline">Замедление
+          <select id="race-speed">
+            <option value="1">×1</option><option value="0.5">×½</option><option value="0.25" selected>×¼</option><option value="0.1">×⅒</option>
+          </select>
+        </label>
+      </div>
+      <canvas id="race-canvas" width="640" height="440"></canvas>
+      <div class="legend">
+        <span style="--c:#5b8def">крыша</span>
+        <span style="--c:#9fd4ff">её капли</span>
+        <span style="--c:#b0b8d0">прямой скат</span>
+        <span style="--c:#ff9a1f">дуга Галилея</span>
+        <span style="--c:#3fbf5f">циклоида</span>
+        <span style="--c:#ff6b5e">капля застряла</span>
+      </div>
+      <p class="note" id="race-note"></p>
+      <div id="roof-info" class="info"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="240"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — время лучшей крыши (шкала справа, меньше — лучше), пунктир — эталоны того же цвета, что в гонке.</p>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 спаривание», чтобы увидеть один шаг эволюции подробно.</div>
+
+      <h2>Геном: высоты изломов</h2>
+      <div id="genome-info" class="info"></div>
+    </section>
+  </main>
+
+  <section class="panel score-panel">
+    <h2>Из чего складывается оценка</h2>
+    <div id="score-info" class="info"></div>
+  </section>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Крыша</b> (<code>js/roof.js</code>): половина поперечного разреза — от конька до карниза, вторая половина зеркальная.
+        Скат — ломаная из N кусков одинаковой ширины. Геном — N − 1 чисел: высоты точек излома. Любой геном — какая-то крыша,
+        хоть зигзаг с ямами.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): капля стартует без скорости и скользит без трения. На прямом куске ускорение
+        постоянное, поэтому время куска = длина / средняя скорость — точно, без шагов по времени. На изломе капля ударяется
+        о следующий кусок, и остаётся только скорость вдоль него: v·cos(угол поворота). Плавный изгиб почти ничего не стоит,
+        а в острой яме капля останавливается. Не хватило скорости заехать вверх — скатывается обратно: вода застревает.
+        Оценка = 1 + T<sub>прямой</sub> / T: двойка — как у прямого ската, больше — быстрее.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в других проектах: трое, худший умирает, потомок
+        с мутацией. Скрещивание — один разрез: верх крыши от мамы, низ от папы. Мутации: сдвиг одной точки, плавный «горб»
+        на несколько точек, сглаживание точки между соседями, новая случайная высота.</li>
+      <li><b>Картинки</b> (<code>js/draw.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/roof.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
