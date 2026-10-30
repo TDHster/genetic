@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мост через ущелье</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Мост через ущелье</h1>
+    <p>Между двумя берегами — случайная долина с рекой. Нужно перекинуть дорогу, по которой поедет грузовик в 30 тонн.
+      Генетический алгоритм собирает <b>ферму</b> — конструкцию из стальных стержней, соединённых шарнирами. Ему ничего
+      не подсказывают: в начале есть только дорога — цепочка шарниров, которая сразу складывается. Эволюция сама находит,
+      что держат только <b>треугольники</b>, сама решает, где упереться в склоны, какой толщины делать стержни и строить
+      ли что-то над дорогой. Каждый мост проверяется честным инженерным расчётом: ни один стержень не должен порваться
+      или выпучиться, где бы ни стоял грузовик. Цель — <b>удержать дорогу самым лёгким мостом</b>. Эталон — классическая
+      ферма Уоррена, подобранная для этой же долины.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="Один турнир: 3 случайных моста, худший погибает, два оставшихся дают потомка">1 спаривание</button>
+      <button id="btn-gen" title="Столько спариваний, сколько мостов в пуле">1 поколение</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул, та же долина">🎲 Новый seed</button>
+      <button id="btn-new-terrain" title="Новая случайная долина">🏔 Новая долина</button>
+    </div>
+    <div class="settings">
+      <label title="Seed долины: та же долина при любом seed эволюции">Долина <input id="cfg-terrain" type="number" value="1"></label>
+      <label>Пул мостов
+        <select id="cfg-pop">
+          <option>100</option><option>200</option><option selected>300</option><option>500</option><option>1000</option>
+        </select>
+      </label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <label title="Сколько поколений в секунду. Замедли, чтобы рассмотреть, как мост растёт">Скорость
+        <select id="cfg-speed">
+          <option value="0" selected>максимум</option>
+          <option value="10">10 поколений/с</option>
+          <option value="2">2 поколения/с</option>
+          <option value="0.5">1 поколение за 2 с</option>
+        </select>
+      </label>
+      <span class="hint">настройки применяются по «Сброс» (скорость — сразу)</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="300"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="3000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший мост в пуле</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="warren">Ферма Уоррена (эталон)</option>
+          </select>
+        </h2>
+        <span>
+          <label class="inline-check"><input id="show-truck" type="checkbox" checked> грузовик едет</label>
+          <label class="inline-check"><input id="show-sag" type="checkbox" checked> показать прогиб</label>
+        </span>
+      </div>
+      <canvas id="bridge-canvas" width="760" height="520"></canvas>
+      <div class="legend">
+        <span style="--c:#5b8def">растянут</span>
+        <span style="--c:#ff6b5e">сжат</span>
+        <span style="--c:#c9d1e6">ярче — ближе к пределу, толще — толще сечение</span>
+        <span style="--c:#f0c040">опора на грунте</span>
+        <span style="--c:#b3412f">стержень сквозь грунт (не строится)</span>
+        <span style="--c:#4a5470">не связан с дорогой</span>
+      </div>
+      <div id="bridge-info" class="info"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="240"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — сталь лучшего моста, который держит (шкала справа, меньше — лучше),
+        серый пунктир — ферма Уоррена.</p>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 спаривание», чтобы увидеть один шаг эволюции подробно.</div>
+
+      <h2>Геном</h2>
+      <div id="genome-info" class="info"></div>
+    </section>
+  </main>
+
+  <section class="panel score-panel">
+    <h2>Из чего складывается оценка</h2>
+    <div id="score-info" class="info"></div>
+  </section>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Долина</b> (<code>js/terrain.js</code>): случайная ломаная — склоны разной крутизны, неровное дно, иногда скала
+        посреди ущелья, внизу река. Дорога прямая, на уровне берегов, с узлами через 4 м. Узел, попавший в грунт, поднимается
+        на поверхность и становится <b>опорой</b> (шарниром, вбитым в землю). В воде опор нет: узел поднимается на поверхность
+        воды и просто висит. Стержень сквозь грунт построить нельзя — он не работает, но сталь на него потрачена.</li>
+      <li><b>Мост</b> (<code>js/bridge.js</code>): геном — свободные узлы (точки) и стержни (пары узлов с сечением: 8 стальных труб
+        от 15 до 256 см², каждая в полтора раза толще предыдущей). Звенья дороги — тоже стержни генома, удалить их нельзя, но сечение выбирает эволюция.
+        Стержни могут перекрещиваться — соединены они только в узлах.</li>
+      <li><b>Расчёт</b> (<code>js/truss.js</code>): метод жёсткостей, как в инженерных программах. Стержень тянет или толкает
+        только вдоль себя: N = E·A / L × удлинение. Для каждого узла записываем равновесие сил, получаем систему уравнений
+        K·d = F (K — матрица жёсткости, d — сдвиги узлов, F — нагрузки) и решаем её методом Холецкого. Если у системы нет
+        единственного решения, конструкция — <b>механизм</b>: её можно сложить, не нагрузив ни одного стержня.</li>
+      <li><b>Нагрузки и проверки</b> (<code>js/fitness.js</code>): вес дороги (2 т на метр), вес самой стали и грузовик
+        30 т — по очереди в каждом узле дороги. Растянутый стержень держит, пока напряжение меньше 200 МПа. Сжатый — ещё и
+        пока не выпучился: сила Эйлера π²·E·I / L², вдвое длиннее — вчетверо слабее. Прогиб дороги — не больше пролёта / 250.</li>
+      <li><b>Оценка</b>: механизм → 0,5 / (1 + число свободных движений); стоит, но ломается → 0,5 + 0,5 / загрузка;
+        держит → 1 + M<sub>Уоррена</sub> / M, где M — масса стали. Двойка — как ферма Уоррена, больше — легче.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в других проектах: трое, худший погибает, потомок
+        с мутацией. Скрещивание — долину режет случайная прямая: узлы и стержни с одной стороны от мамы, с другой от папы.
+        Мутации слепые: новый стержень к соседнему узлу, треугольник на стержне, узел на стержне, удаление стержня или узла,
+        сдвиг узла, сечение толще или тоньше. Ни одна мутация не знает, где какие силы.</li>
+      <li><b>Картинки</b> (<code>js/draw.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/terrain.js"></script>
+  <script src="js/truss.js"></script>
+  <script src="js/bridge.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
