@@ -18,7 +18,7 @@ const COLORS = {
   crossroads: '#c9d6ff',
 };
 
-const CITY_RADIUS = 18; // px
+const CITY_RADIUS = 9; // px
 
 // The world-to-canvas mapping for the map.
 function mapView(w, h) {
