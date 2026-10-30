@@ -24,17 +24,16 @@ function readConfig() {
     task: {
       map: $('cfg-map').value,
       mode: $('cfg-mode').value,
-      tripWeight: tripWeight(),
+      tripShare: tripShare(),
       cities: Math.min(50, Math.max(3, Math.round(Number($('cfg-cities').value) || 20))),
       mapSeed: Number($('cfg-map-seed').value) || 1,
     },
   };
 }
 
-// The trip weight slider: a log-like scale, k = 0 means "only building counts".
-const TRIP_WEIGHTS = [0, 1, 3, 10, 30, 100, 300];
-function tripWeight() {
-  return TRIP_WEIGHTS[Number($('cfg-trip').value)];
+// The slider "shorter roads - faster trips": 0..100% -> w = 0..1.
+function tripShare() {
+  return Number($('cfg-trip').value) / 100;
 }
 
 function readStopRules() {
@@ -144,7 +143,7 @@ function drawStats() {
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
     (!best.connected ? ` · лучшая сеть связывает только <b>${Math.round(best.share * 100)}%</b> городов`
       : TASK.mode === 'routes'
-        ? ` · лучшая сеть: стоимость <b>${best.cost.toFixed(0)}</b> (остов ${REFS.mst.cost.toFixed(0)}), дороги ${km(best.length)}, ` +
+        ? ` · лучшая сеть: стоимость <b>${best.cost.toFixed(4)}</b> (остов ${REFS.mst.cost.toFixed(4)}), дороги ${km(best.length)}, ` +
           `средняя поездка ${km(best.trip)}`
         : ` · лучшая сеть <b>${km(best.length)}</b> (короче остова на ${pct(gainOverMst(best.length))}` +
           (REFS.exact ? `; точный ответ ${km(REFS.exact.length)}` : '') + ')') +
@@ -155,8 +154,9 @@ function drawStats() {
 
 // Junction counts of a network: all, useful (3+ roads), at 120°.
 function junctionCounts(net) {
-  const s = net.junctionInfo;
-  return { all: s.length, useful: s.filter((j) => !j.useless).length, at120: s.filter((j) => j.at120).length };
+  const s = net.junctionInfo.filter((j) => !j.crossroads);
+  return { all: s.length, useful: s.filter((j) => !j.useless).length, at120: s.filter((j) => j.at120).length,
+    crossroads: net.junctionInfo.length - s.length };
 }
 
 function drawNetInfo() {
@@ -165,11 +165,12 @@ function drawNetInfo() {
     : `Сеть #${net.id} (${net.parents ? `потомок #${net.parents[0]} и #${net.parents[1]}` : 'из случайного начального пула'})`;
   const j = junctionCounts(net);
   $('net-info').innerHTML = `<div>${who} · класс: <b>${CLASS_NAMES[net.cls]}</b> · оценка <b>${net.score.toFixed(4)}</b> · ` +
-    `длина дорог <b>${km(net.length)}</b> · дорог ${net.edges.length}` +
+    `длина дорог <b>${km(net.length)}</b> · дорог ${net.roadCount}` +
     (net.extra ? ` (лишних в кольцах ${net.extra})` : '') +
     ` · развилок ${j.all} (полезных ${j.useful}, под 120° ${j.at120})` +
+    (j.crossroads ? ` · перекрёстков ${j.crossroads}` : '') +
     (!net.connected ? ` · <span class="bad">связано ${Math.round(net.share * 100)}% городов</span>`
-      : TASK.mode === 'routes' ? ` · средняя поездка <b>${km(net.trip)}</b>, крюк ×${net.detour.toFixed(2)} · стоимость <b>${net.cost.toFixed(1)}</b>` : '') +
+      : TASK.mode === 'routes' ? ` · средняя поездка <b>${km(net.trip)}</b>, крюк ×${net.detour.toFixed(2)} · стоимость <b>${net.cost.toFixed(4)}</b>` : '') +
     '</div>';
 }
 
@@ -216,29 +217,34 @@ function drawScoreInfo() {
 
 // 'routes' mode: building against trips.
 function drawRouteScore(net) {
-  const k = TASK.tripWeight;
+  const w = TASK.tripShare;
   const row = (r, name) => `<tr><td>${name}</td><td>${km(r.length)}</td><td>${km(r.trip)}</td><td>×${r.detour.toFixed(3)}</td>` +
-    `<td>${r.edges.length}</td><td><b>${r.cost.toFixed(1)}</b></td></tr>`;
+    `<td>${r.roadCount}</td><td><b>${r.cost.toFixed(4)}</b></td></tr>`;
   $('score-info').innerHTML =
-    '<table class="score-table"><tr><th>Сеть</th><th>Длина дорог L</th><th>Средняя поездка T</th><th>Средний крюк</th><th>Дорог</th><th>Стоимость L + k·T</th></tr>' +
+    '<table class="score-table"><tr><th>Сеть</th><th>Длина дорог L</th><th>Средняя поездка T</th><th>Средний крюк</th><th>Дорог</th><th>Стоимость C</th></tr>' +
     (net === REFS.mst ? '' : row(net, '<b>эта сеть</b>')) + row(REFS.mst, REFS.mst.name) + '</table>' +
-    `<div class="formula">стоимость = L + k·T = ${net.length.toFixed(1)} + ${k} × ${net.trip.toFixed(2)} = ${net.cost.toFixed(1)}; ` +
-    `оценка = 1 + C<sub>остова</sub> / C = 1 + ${REFS.mst.cost.toFixed(1)} / ${net.cost.toFixed(1)} = <b>${net.score.toFixed(4)}</b></div>` +
-    '<p class="note">T — среднее по всем парам городов: кратчайший путь по дорогам из одного в другой. Крюк — во сколько раз путь ' +
-    'по дорогам длиннее прямой (×1 — дорога прямо). k — во сколько раз километр средней поездки важнее километра стройки. ' +
-    'При k = 0 ответ — дерево Штейнера, с ростом k появляются кольца и прямые дороги между соседями, поездки короче, дорог больше. ' +
-    'Без стоимости стройки лучшей была бы прямая дорога между каждой парой городов. ' +
+    `<div class="formula">C = (1 − w)·L / L<sub>остова</sub> + w·T / T<sub>прямо</sub> = ${(1 - w).toFixed(2)} × ${net.length.toFixed(1)} / ${REFS.mst.length.toFixed(1)} + ` +
+    `${w.toFixed(2)} × ${net.trip.toFixed(2)} / ${REFS.straight.toFixed(2)} = ${net.cost.toFixed(4)}<br>` +
+    `оценка = 1 + C<sub>остова</sub> / C = 1 + ${REFS.mst.cost.toFixed(4)} / ${net.cost.toFixed(4)} = <b>${net.score.toFixed(4)}</b></div>` +
+    '<p class="note">w — положение ползунка «короче дороги — быстрее добраться» (0…100%). T — среднее по всем парам городов: ' +
+    'кратчайший путь по дорогам из одного в другой. T<sub>прямо</sub> — среднее расстояние по прямой, как если бы между каждой парой ' +
+    'была своя дорога. Крюк — во сколько раз путь по дорогам длиннее прямой (×1 — дорога прямо). ' +
+    'При 0% ответ — дерево Штейнера, с ростом w появляются кольца и прямые дороги между соседями, поездки короче, дорог больше. ' +
+    'При 100% важны только поездки, и лучшая сеть — прямая дорога между каждой парой городов. ' +
     'Правило 120° здесь уже не обязано выполняться: развилку тянут к себе и стройка, и поездки.</p>';
 }
 
 // The genome as a table: every junction, its roads and the angles between them.
 function drawGenome() {
   const net = state.shown;
-  const stats = net.junctionInfo;
+  const stats = net.junctionInfo.filter((j) => !j.crossroads);
+  const crossroads = net.junctionInfo.length - stats.length;
+  const crossNote = crossroads ? `<p class="note">Ещё ${crossroads} перекрёстков — там дороги пересекаются. Их нет в геноме, ` +
+    'но по ним можно свернуть, как на развилке.</p>' : '';
   if (!stats.length) {
     $('genome-info').innerHTML = roadsNote(net) + (roadsInGenome() || net.key
       ? '<p class="note">Развилок нет: дороги идут только от города к городу.</p>'
-      : '<p class="note">Развилок нет: дороги идут только от города к городу, и сеть — это остов.</p>');
+      : '<p class="note">Развилок нет: дороги идут только от города к городу, и сеть — это остов.</p>') + crossNote;
     return;
   }
   let html = '<table><tr><th>Развилка</th><th>x</th><th>y</th><th>Дорог</th><th>Углы между дорогами</th></tr>';
@@ -250,7 +256,7 @@ function drawGenome() {
       `<td>${note || angles}</td></tr>`;
   });
   $('genome-info').innerHTML = roadsNote(net) + html + '</table><p class="note">Зелёные — три дороги под 120°, как в точном ответе. ' +
-    'Серые — лишние: тупик или изгиб на две дороги только удлиняют сеть, но и не ломают её. Координаты в км.</p>';
+    'Серые — лишние: тупик или изгиб на две дороги только удлиняют сеть, но и не ломают её. Координаты в км.</p>' + crossNote;
 }
 
 // What the genome says about roads: in the 'roads' mode they are in the genome, in the 'tree' mode - computed.
@@ -263,7 +269,7 @@ function roadsNote(net) {
 
 function describeStep(s) {
   const size = (c) => (!c.connected ? `связано ${Math.round(c.share * 100)}% городов`
-    : TASK.mode === 'routes' ? `стоимость ${c.cost.toFixed(1)} (дороги ${km(c.length)}, поездка ${km(c.trip)})` : km(c.length));
+    : TASK.mode === 'routes' ? `стоимость ${c.cost.toFixed(4)} (дороги ${km(c.length)}, поездка ${km(c.trip)})` : km(c.length));
   const roads = (c) => (c.genome.roads ? `, дорог ${c.genome.roads.length}` : '');
   const line = (label, c) => `${label} #${c.id}: ${CLASS_NAMES[c.cls]}, ${size(c)}, развилок ${c.genome.junctions.length}${roads(c)}, оценка ${c.score.toFixed(4)}`;
   return [
@@ -312,9 +318,9 @@ $('cfg-map').onchange = () => { setRunning(false); reset(); };
 $('cfg-mode').onchange = () => { setRunning(false); reset(); };
 // The trip weight changes on the fly: the same pool is scored again, evolution goes on towards the new goal.
 $('cfg-trip').oninput = () => {
-  $('cfg-trip-out').textContent = `k = ${tripWeight()}`;
+  $('cfg-trip-out').textContent = `${$('cfg-trip').value}%`;
   if (TASK.mode !== 'routes') return;
-  setTripWeight(tripWeight());
+  setTripShare(tripShare());
   state.evo.rescore();
   state.stopReason = null;
   refreshPanels(true);

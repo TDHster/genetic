@@ -18,10 +18,14 @@
 // can leave cities unconnected, and it can have extra roads (rings, dead ends) that only add length.
 //
 // In the 'routes' mode (roads also from the genome) the goal is not only short roads but also short TRIPS.
-// The COST of a network = L + k · (average shortest path by road between two cities), k = TASK.tripWeight.
-// k = 0: only building counts, the answer is the Steiner tree. The bigger k, the more a direct road
+// The COST of a network mixes the two, w = TASK.tripShare (the slider, 0..1):
+//   C = (1 − w) · L / L_MST + w · T / T_straight,
+// L - length of the roads, T - average shortest path by road between two cities (all pairs),
+// T_straight - average straight-line distance between two cities (as if every pair had a direct road).
+// Both parts are 1 for "as good as the reference": the MST for the roads, straight lines for the trips.
+// w = 0: only building counts, the answer is the Steiner tree. The bigger w, the more a direct road
 // between cities is worth: rings and chords appear, trips get shorter, the roads get longer.
-// (Without the building cost the best would be a direct road between every pair of cities.)
+// w = 1: only trips count, the answer is a direct road between every pair of cities.
 // In the other modes the cost is just the length L.
 //
 // SCORE:
@@ -117,7 +121,8 @@ function setTask(task) {
   CLASS_NAMES = TASK.mode === 'routes' ? ROUTE_CLASSES : TREE_CLASSES;
   // The MST first: scores and classes are measured against it.
   const m = mst(CITIES);
-  REFS.mst = { key: 'mst', name: 'остов без развилок', nodes: CITIES.slice(), junctionInfo: [], length: m.length, edges: m.edges,
+  REFS.straight = averageStraight();
+  REFS.mst = { key: 'mst', name: 'остов без развилок', nodes: CITIES.slice(), junctionInfo: [], length: m.length, edges: m.edges, roadCount: m.edges.length,
     connected: true, share: 1, extra: 0 };
   Object.assign(REFS.mst, networkCost(REFS.mst));
   REFS.bound = { length: STEINER_RATIO * m.length };
@@ -130,10 +135,10 @@ function setTask(task) {
   if (REFS.exact) Object.assign(REFS.exact, classify(REFS.exact));
 }
 
-// The trip weight k can change during a run (the slider): the MST cost and the classes of the references
+// The trip share w can change during a run (the slider): the MST cost and the classes of the references
 // change with it. The pool is re-scored by Evolution.rescore().
-function setTripWeight(k) {
-  TASK.tripWeight = k;
+function setTripShare(w) {
+  TASK.tripShare = w;
   Object.assign(REFS.mst, networkCost(REFS.mst));
   Object.assign(REFS.mst, classify(REFS.mst));
 }
@@ -153,13 +158,23 @@ function gainOverMst(length) {
   return 1 - length / REFS.mst.length;
 }
 
-// Cost of a connected network: the length, plus k · average trip in the 'routes' mode.
+// Cost of a connected network: the length, or in the 'routes' mode the mix of length and trips (see the top).
 // Returns { cost, trip, detour }: trip - average shortest path between two cities by road,
 // detour - average of (path by road / straight line), 1 = every trip goes straight.
 function networkCost(net) {
   if (TASK.mode !== 'routes') return { cost: net.length };
   const { trip, detour } = tripStats(net);
-  return { cost: net.length + TASK.tripWeight * trip, trip, detour };
+  const w = TASK.tripShare;
+  return { cost: (1 - w) * net.length / REFS.mst.length + w * trip / REFS.straight, trip, detour };
+}
+
+// Average straight-line distance between two cities: the trip if every pair had a direct road.
+function averageStraight() {
+  let sum = 0, pairs = 0;
+  for (let s = 0; s < CITIES.length; s++) {
+    for (let t = s + 1; t < CITIES.length; t++) { sum += Math.hypot(CITIES[s].x - CITIES[t].x, CITIES[s].y - CITIES[t].y); pairs++; }
+  }
+  return sum / pairs;
 }
 
 // Shortest paths by road from every city to every other one (Dijkstra, O(V²) per city).
@@ -218,28 +233,30 @@ function evaluateRoads(genome) {
 function evaluateTree(genome) {
   const nodes = CITIES.concat(genome.junctions);
   const m = mst(nodes);
-  const net = { nodes, length: m.length, cost: m.length, edges: m.edges, connected: true, share: 1, extra: 0 };
+  const net = { nodes, length: m.length, cost: m.length, edges: m.edges, roadCount: m.edges.length, connected: true, share: 1, extra: 0 };
   net.junctionInfo = junctionStats(net);
   return { ...net, ...classify(net) };
 }
 
 // 'roads' and 'routes' modes: the roads are taken from the genome as they are.
+// Where two roads cross, there is a CROSSROADS: a node of the network like a junction, only not in the genome.
+// It does not change the length, but a trip can turn there, and two crossing roads are connected.
 function evaluateFree(genome) {
   const n = CITIES.length;
-  const nodes = CITIES.concat(genome.junctions);
+  const own = CITIES.concat(genome.junctions);
   const index = new Map(genome.junctions.map((j, k) => [j.id, n + k]));
   const at = (key) => (key < n ? key : index.get(key));
+  const roads = genome.roads.map(([a, b]) => [at(a), at(b)]);
+  let length = 0;
+  for (const [i, j] of roads) length += Math.hypot(own[i].x - own[j].x, own[i].y - own[j].y);
+  const { nodes, edges } = addCrossroads(own, roads);
   // Union-find: which nodes are connected to which.
   const parent = nodes.map((_, i) => i);
   const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
-  const edges = [];
-  let length = 0, extra = 0;
-  for (const [a, b] of genome.roads) {
-    const i = at(a), j = at(b);
-    length += Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
-    edges.push([i, j]);
+  let extra = 0;
+  for (const [i, j] of edges) {
     const ri = find(i), rj = find(j);
-    if (ri === rj) extra++; // closes a ring: some road of the ring is not needed
+    if (ri === rj) extra++; // closes a ring: some road of the ring is not needed for connectivity
     else parent[ri] = rj;
   }
   // The largest piece by the number of cities in it.
@@ -248,14 +265,42 @@ function evaluateFree(genome) {
   let main = -1, largest = 0;
   for (const [root, count] of citiesIn) if (count > largest) { largest = count; main = root; }
   const linked = CITIES.map((_, i) => find(i) === main);
-  const net = { nodes, length, edges, connected: largest === n, share: largest / n, extra, linked };
+  const net = { nodes, length, edges, roadCount: roads.length, firstCrossroads: own.length, connected: largest === n, share: largest / n, extra, linked };
   // Trips are counted only when every city can be reached.
   if (net.connected) Object.assign(net, networkCost(net));
   net.junctionInfo = junctionStats(net);
   return { ...net, ...classify(net) };
 }
 
-// For every junction: its roads and the angles between them (for the classes and the panels).
+// Cut the roads where they cross. Returns { nodes: the given nodes + one node per crossing, edges: the pieces }.
+// Roads that share an end do not cross. O(roads²) - fine for a few dozen roads.
+function addCrossroads(own, roads) {
+  const nodes = own.slice();
+  const cuts = roads.map(() => []); // [position along the road 0..1, node index]
+  for (let r = 0; r < roads.length; r++) {
+    const [a, b] = roads[r];
+    const p = own[a], rx = own[b].x - p.x, ry = own[b].y - p.y;
+    for (let q = r + 1; q < roads.length; q++) {
+      const [c, d] = roads[q];
+      if (a === c || a === d || b === c || b === d) continue;
+      const x = segmentCrossing(p, own[b], own[c], own[d]);
+      if (!x) continue;
+      const k = nodes.length;
+      nodes.push({ x: p.x + x.t * rx, y: p.y + x.t * ry });
+      cuts[r].push([x.t, k]);
+      cuts[q].push([x.u, k]);
+    }
+  }
+  const edges = [];
+  roads.forEach(([a, b], r) => {
+    let prev = a;
+    for (const [, k] of cuts[r].sort((x, y) => x[0] - y[0])) { edges.push([prev, k]); prev = k; }
+    edges.push([prev, b]);
+  });
+  return { nodes, edges };
+}
+
+// For every junction (and crossroads): its roads and the angles between them (for the classes and the panels).
 function junctionStats(net) {
   const nc = CITIES.length;
   const roads = net.nodes.map(() => []);
@@ -266,6 +311,7 @@ function junctionStats(net) {
     const degree = dirs.length;
     // "At 120°": three roads, every angle within 5° of 120.
     const at120 = degree === 3 && angles.every((a) => Math.abs(a - 120) < 5);
-    return { p, degree, angles: degree >= 2 ? angles : [], useless: degree <= 2, at120 };
+    const crossroads = net.firstCrossroads !== undefined && nc + k >= net.firstCrossroads;
+    return { p, degree, angles: degree >= 2 ? angles : [], useless: degree <= 2, at120, crossroads };
   });
 }

@@ -6,9 +6,9 @@
 //   - 'tree': the roads are NOT in the genome. For any set of points (cities + junctions) the shortest
 //     tree that connects them is known exactly - the minimum spanning tree (see fitness.js).
 //     Evolution only answers "where to put the junctions and how many", every genome is a valid network;
-//   - 'roads': the roads ARE in the genome too, as pairs of nodes. A random genome is a tangle of long
-//     roads, often with cities left unconnected. Evolution has to learn everything itself: connect all
-//     the cities, drop the extra roads, and only then place the junctions;
+//   - 'roads': the roads ARE in the genome too, as pairs of nodes. The start is an empty map with no roads.
+//     Evolution has to learn everything itself: connect all the cities, drop the extra roads,
+//     and only then place the junctions;
 //   - 'routes': the same genome as 'roads', but the goal also counts trips between the cities (fitness.js):
 //     a compromise between cheap building and short trips.
 //
@@ -20,8 +20,8 @@ const MAP_H = 70;
 // The task: which cities to connect. Filled by setTask() in fitness.js.
 //   map: 'trilattice' | 'grid' | 'random' | 'triangle' | 'square' | 'hexagon'; cities: how many (random map only);
 //   mapSeed: seed of the random map (separate from the evolution seed: same map, different runs).
-//   mode: 'tree' | 'roads' | 'routes' (see above); tripWeight: k in the 'routes' cost (fitness.js).
-const TASK = { map: 'trilattice', cities: 20, mapSeed: 1, mode: 'routes', tripWeight: 30 };
+//   mode: 'tree' | 'roads' | 'routes' (see above); tripShare: 0..1, how much trips count in the 'routes' cost (fitness.js).
+const TASK = { map: 'random', cities: 20, mapSeed: 1, mode: 'routes', tripShare: 0.75 };
 
 // Are the roads in the genome ('roads' and 'routes') or built by the MST ('tree')?
 function roadsInGenome() {
@@ -76,8 +76,20 @@ function makeCities(task) {
 }
 
 // More than n − 2 junctions never help: a Steiner tree for n cities has at most n − 2 of them.
+// (In the 'routes' mode the answer is not a tree: rings cross each other, so there is more room - 2n.)
 function maxJunctions() {
-  return Math.max(0, CITIES.length - 2);
+  return TASK.mode === 'routes' ? 2 * CITIES.length : Math.max(0, CITIES.length - 2);
+}
+
+// Where segments p1-p2 and p3-p4 cross: { t, u } - positions along each of them (0..1, ends excluded), or null.
+function segmentCrossing(p1, p2, p3, p4) {
+  const rx = p2.x - p1.x, ry = p2.y - p1.y, sx = p4.x - p3.x, sy = p4.y - p3.y;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-12) return null; // parallel
+  const t = ((p3.x - p1.x) * sy - (p3.y - p1.y) * sx) / den;
+  const u = ((p3.x - p1.x) * ry - (p3.y - p1.y) * rx) / den;
+  const eps = 1e-9;
+  return t > eps && t < 1 - eps && u > eps && u < 1 - eps ? { t, u } : null;
 }
 
 function randomPoint(rng) {
@@ -203,21 +215,10 @@ function hasRoad(genome, a, b) {
   return genome.roads.some(([u, v]) => (u === a && v === b) || (u === b && v === a));
 }
 
-// Starting pool: up to n − 2 junctions at random places and from n/2 to 2n roads between random nodes -
-// a tangle of long roads across the map. Usually some cities stay unconnected.
-function randomRoadsFree(rng) {
-  const n = CITIES.length;
-  const junctions = [];
-  const k = rng.int(maxJunctions() + 1);
-  for (let i = 0; i < k; i++) junctions.push({ id: nextJunctionId++, ...randomPoint(rng) });
-  const genome = { junctions, roads: [] };
-  const keys = allKeys(genome);
-  const m = rng.intRange(Math.ceil(n / 2), 2 * n);
-  for (let i = 0; i < m; i++) {
-    const a = keys[rng.int(keys.length)], b = keys[rng.int(keys.length)];
-    if (a !== b && !hasRoad(genome, a, b)) genome.roads.push([a, b]);
-  }
-  return genome;
+// Starting pool: an empty map - only the cities, no roads and no junctions. Every road is laid by evolution:
+// the first mutations connect neighbours, and the network grows from nothing.
+function randomRoadsFree() {
+  return { junctions: [], roads: [] };
 }
 
 // CROSSOVER: the same random cut. Junctions and roads (by their middle point) on one side come from mom,
@@ -256,17 +257,20 @@ function crossoverFree(mom, dad, rng) {
 //     joined to the node by a short road (5%). Without it evolution gets stuck: a bend a-b-c cannot
 //     become a Y (three roads from a junction), nor a cross of 4 roads - two junctions of 3 roads,
 //     because every step on the way there makes the network longer;
-//   - small (20%) or big (5%) shift of a junction;
+//   - a crossroads (two roads crossing) becomes a junction of the genome: a-b and c-d become a-j, j-b, c-j, j-d (5%).
+//     The length does not change, but now the junction can be split or moved - without it two crossing roads
+//     (an X between four cities) are a trap: the crossroads is not in the genome, no mutation can touch it;
+//   - small (15%) or big (5%) shift of a junction;
 //   - a junction removed, its neighbours joined one after another so that the network does not fall apart (5%).
 function mutateFree(genome, rng) {
   const { roads, junctions } = genome;
   const r = rng.next();
   let op = r < 0.2 ? 'near' : r < 0.25 ? 'any' : r < 0.4 ? 'remove' : r < 0.5 ? 'rewire' : r < 0.65 ? 'split'
-    : r < 0.7 ? 'fork' : r < 0.9 ? 'small' : r < 0.95 ? 'big' : 'drop';
+    : r < 0.7 ? 'fork' : r < 0.75 ? 'settle' : r < 0.9 ? 'small' : r < 0.95 ? 'big' : 'drop';
   if (!roads.length && op !== 'any') op = 'near';
   if (!junctions.length && (op === 'small' || op === 'big' || op === 'drop')) op = 'split';
   // No room for a new junction: remove one instead (otherwise useless junctions without roads take all the room).
-  if (junctions.length >= maxJunctions() && (op === 'split' || op === 'fork')) op = junctions.length ? 'drop' : 'near';
+  if (junctions.length >= maxJunctions() && (op === 'split' || op === 'fork' || op === 'settle')) op = junctions.length ? 'drop' : 'near';
   const name = (key) => (key < CITIES.length ? `город ${key + 1}` : `развилка ${junctions.findIndex((j) => j.id === key) + 1}`);
 
   if (op === 'near' || op === 'any') {
@@ -297,6 +301,27 @@ function mutateFree(genome, rng) {
     junctions.push(j);
     roads.splice(i, 1, [a, j.id], [j.id, b]);
     return `на дорогу ${name(a)} — ${name(b)} поставлена развилка ${fmtPoint(j)}`;
+  }
+  if (op === 'settle') {
+    const crossings = [];
+    for (let i = 0; i < roads.length; i++) {
+      for (let k = i + 1; k < roads.length; k++) {
+        const [a, b] = roads[i], [c, d] = roads[k];
+        if (a === c || a === d || b === c || b === d) continue;
+        const pa = nodeByKey(genome, a), pb = nodeByKey(genome, b);
+        const x = segmentCrossing(pa, pb, nodeByKey(genome, c), nodeByKey(genome, d));
+        if (x) crossings.push([i, k, { x: pa.x + x.t * (pb.x - pa.x), y: pa.y + x.t * (pb.y - pa.y) }]);
+      }
+    }
+    if (!crossings.length) return 'перекрёсток в развилку не получился: дороги не пересекаются';
+    const [i, k, p] = crossings[rng.int(crossings.length)];
+    const [a, b] = roads[i], [c, d] = roads[k];
+    const j = { id: nextJunctionId++, x: p.x, y: p.y };
+    junctions.push(j);
+    roads.splice(k, 1);
+    roads.splice(i, 1);
+    roads.push([a, j.id], [j.id, b], [c, j.id], [j.id, d]);
+    return `перекрёсток дорог ${name(a)} — ${name(b)} и ${name(c)} — ${name(d)} стал развилкой ${fmtPoint(j)}`;
   }
   if (op === 'fork') {
     const degree = new Map();

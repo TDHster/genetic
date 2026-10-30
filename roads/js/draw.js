@@ -15,7 +15,10 @@ const COLORS = {
   bound: '#ff6b5e',
   text: '#9aa6c7',
   unlinked: '#ff6b5e',
+  crossroads: '#c9d6ff',
 };
+
+const CITY_RADIUS = 18; // px
 
 // The world-to-canvas mapping for the map.
 function mapView(w, h) {
@@ -58,38 +61,46 @@ function drawMap(ctx, net, w, h, showMst) {
   for (const [i, j] of net.edges) segment(nodes[i], nodes[j]);
   ctx.stroke();
 
+  // Cities over the roads, junctions over the cities (a big city circle must not hide a junction next to it).
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = COLORS.cityEdge;
+  CITIES.forEach((c, i) => {
+    // A city not connected to the main piece of the network: red (on an empty map with no roads yet all are white).
+    ctx.fillStyle = net.linked && net.roadCount && !net.linked[i] ? COLORS.unlinked : COLORS.city;
+    ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), CITY_RADIUS, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+  });
+
   // Junctions: green - three roads at 120°, yellow - a real junction but the angles are off, grey ring - useless.
   const stats = net.junctionInfo;
   ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'left';
+  // Crossroads (two roads crossing, not in the genome): a small light dot without a number.
+  const ownCount = stats.filter((s) => !s.crossroads).length;
   stats.forEach((s, k) => {
     const x = X(s.p.x), y = Y(s.p.y);
+    if (s.crossroads) {
+      ctx.fillStyle = COLORS.crossroads;
+      ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 2 * Math.PI); ctx.fill();
+      return;
+    }
     ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
     if (s.useless) {
       ctx.strokeStyle = COLORS.useless; ctx.lineWidth = 1.5; ctx.stroke();
     } else {
       ctx.fillStyle = s.at120 ? COLORS.at120 : COLORS.junction; ctx.fill();
     }
-    if (stats.length <= 25) {
+    if (ownCount <= 25) {
       ctx.fillStyle = COLORS.text;
       ctx.fillText(String(k + 1), x + 6, y - 5);
     }
   });
 
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = COLORS.cityEdge;
-  ctx.fillStyle = COLORS.city;
-  CITIES.forEach((c, i) => {
-    // A city not connected to the main piece of the network: red.
-    ctx.fillStyle = net.linked && !net.linked[i] ? COLORS.unlinked : COLORS.city;
-    ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), 6, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-  });
 
   ctx.font = '13px system-ui, sans-serif';
   ctx.fillStyle = COLORS.text;
   ctx.fillText(`дороги ${net.length.toFixed(1)} км` +
     (!net.connected ? ` · связано ${Math.round(net.share * 100)}% городов`
-      : TASK.mode === 'routes' ? ` · средняя поездка ${net.trip.toFixed(1)} км · стоимость ${net.cost.toFixed(0)}` : ''), 10, 18);
+      : TASK.mode === 'routes' ? ` · средняя поездка ${net.trip.toFixed(1)} км · стоимость ${net.cost.toFixed(3)}` : ''), 10, 18);
   ctx.restore();
 }
 
@@ -154,7 +165,7 @@ function drawPopulationChart(ctx, history, w, h) {
   ctx.textAlign = 'right';
   for (const f of [0, 0.5, 1]) ctx.fillText(Math.round(f * 100) + '%', pad.l - 4, pad.t + ph * (1 - f) + 4);
   ctx.textAlign = 'left';
-  for (const f of [0, 0.5, 1]) ctx.fillText((lo + f * (hi - lo)).toFixed(TASK.mode === 'routes' ? 0 : 1) + (TASK.mode === 'routes' ? '' : ' км'), pad.l + pw + 4, pad.t + ph * (1 - f) + 4);
+  for (const f of [0, 0.5, 1]) ctx.fillText((lo + f * (hi - lo)).toFixed(TASK.mode === 'routes' ? 3 : 1) + (TASK.mode === 'routes' ? '' : ' км'), pad.l + pw + 4, pad.t + ph * (1 - f) + 4);
   ctx.textAlign = 'center';
   const gens = n - 1;
   const step = niceStep(gens / 5);
