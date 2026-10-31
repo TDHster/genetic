@@ -151,7 +151,9 @@ function drawStats() {
     `Seed <b>${evo.cfg.seed}</b> · поколение <b>${evo.generation.toFixed(1)}</b> · спариваний <b>${evo.matings.toLocaleString('ru')}</b>` +
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
     (budgetMode() ? ` · бюджет ${tons(TASK.budget)}` + (best.cls >= 2 ? ` · лучший мост: запас прочности <b>${times(best.strength)}</b>` +
-      (REFS.warren ? ` (ферма Уоррена из той же стали ${times(REFS.warren.strength)}, прочнее в ${(best.strength / REFS.warren.strength).toFixed(2)} раза)` : '')
+      (REFS.warren ? ` (ферма Уоррена из той же стали ${times(REFS.warren.strength)}, ` +
+        (best.strength >= REFS.warren.strength ? `прочнее в ${(best.strength / REFS.warren.strength).toFixed(2)} раза)`
+          : `слабее в ${(REFS.warren.strength / best.strength).toFixed(2)} раза)`) : '')
       : ' · ни один мост ещё не уложился в бюджет')
     : best.cls >= 2 ? ` · лучший мост <b>${costText(best)}</b>` +
       (REFS.warren ? ` (ферма Уоррена ${costText(REFS.warren)}, ${strengthMode() ? 'эффективнее' : 'легче'} ` +
