@@ -19,8 +19,14 @@
 // SCORE:
 //   - a mechanism (folds up, truss.js): score = 0.5 / (1 + number of free modes): every fixed mode is progress;
 //   - stands but breaks (u > 1): score = 0.5 + 0.5 / u;
-//   - holds: score = 1 + M_warren / M, M - mass of the steel, M_warren - mass of the reference Warren truss
-//     for the same valley. 2 = as light as the reference, above 2 - lighter.
+//   - holds: score = 1 + C_warren / C, where C is the COST of the bridge and C_warren the cost of the reference
+//     Warren truss for the same valley. 2 = as good as the reference, above 2 - better. The cost depends on
+//     the goal (TASK.mode):
+//       'light'    - C = M, the mass of the steel: the lightest bridge that holds the truck;
+//       'strength' - C = u·M, steel per unit of strength: the mass the bridge would have if all its sections
+//                    were thinned until it is loaded to 100% (roughly). A bridge loaded to 60% wastes 40% of its
+//                    steel, so here a small bar that unloads the weakest place pays off at once - in the 'light'
+//                    mode it pays off only after other bars get thinner, too.
 
 const ROAD_LOAD = 20;      // kN per metre of road
 const TRUCK_LOAD = 300;    // kN (a 30 t truck)
@@ -29,7 +35,12 @@ const STEEL_WEIGHT = 78.5; // kN/m³
 const STEEL_DENSITY = 7.85; // t/m³
 const SAG_LIMIT = 250;
 
-const CLASS_NAMES = ['складывается (механизм)', 'стоит, но ломается', 'держит, не легче эталона', 'держит, легче эталона', 'легче эталона в полтора раза'];
+const CLASS_NAMES = ['складывается (механизм)', 'стоит, но ломается', '', '', ''];
+// The names of the classes that hold depend on the goal: setTask puts them into CLASS_NAMES.
+const MODE_CLASS_NAMES = {
+  light: ['держит, не легче эталона', 'держит, легче эталона', 'легче эталона в полтора раза'],
+  strength: ['держит, не эффективнее эталона', 'держит, эффективнее эталона', 'эффективнее эталона в полтора раза'],
+};
 const CLASS_COLORS = ['#3a2a5a', '#b3412f', '#d08a2c', '#3fbf5f', '#f0c040'];
 const LIGHT_FACTOR = 1.5;
 
@@ -138,17 +149,21 @@ function evaluateBridge(genome, detail) {
   return result;
 }
 
+const bridgeCost = (u, mass) => (TASK.mode === 'strength' ? u * mass : mass);
+
 function classify(m) {
   if (m.mechanism) return { cls: 0, score: 0.5 / (1 + m.mechanism), mechanism: m.mechanism };
   if (m.u > 1) return { cls: 1, score: 0.5 + 0.5 / m.u, mechanism: 0 };
-  const ref = REFS.warren ? REFS.warren.mass : m.mass;
-  const cls = m.mass >= ref ? 2 : m.mass * LIGHT_FACTOR > ref ? 3 : 4;
-  return { cls, score: 1 + ref / m.mass, mechanism: 0 };
+  const cost = bridgeCost(m.u, m.mass);
+  const ref = REFS.warren ? REFS.warren.cost : cost;
+  const cls = cost >= ref ? 2 : cost * LIGHT_FACTOR > ref ? 3 : 4;
+  return { cls, score: 1 + ref / cost, cost, mechanism: 0 };
 }
 
 // THE REFERENCE: a Warren truss - the classic railway bridge. Triangles over the road, a top chord
 // at height h, no supports but the two banks. Its sections are picked by the usual engineer's loop:
-// start thin, make every overloaded bar one size thicker, test again. We try a few heights and keep the lightest.
+// start thin, make every overloaded bar one size thicker, test again. We try a few heights and keep the best
+// one for the goal (the lightest, or the one with the least steel per unit of strength).
 function warrenGenome(h) {
   const D = deckCount();
   const genome = { nodes: [], bars: [] };
@@ -184,15 +199,16 @@ function sizeUp(genome) {
 
 function setTask(task) {
   Object.assign(TASK, task);
+  CLASS_NAMES.splice(2, 3, ...MODE_CLASS_NAMES[TASK.mode]);
   makeTerrain(TASK.terrainSeed);
   for (const key of Object.keys(REFS)) delete REFS[key];
   resetNodeIds();
   let best = null;
   for (const k of [4, 5, 6, 7, 8, 10, 12]) {
     const r = sizeUp(warrenGenome(TERRAIN.span / k));
-    if (r && (!best || r.mass < best.mass)) best = r;
+    if (r && (!best || bridgeCost(r.u, r.mass) < bridgeCost(best.u, best.mass))) best = r;
   }
   // Ids of the reference nodes are not reused by the genomes of evolution.
-  REFS.warren = best ? { name: 'ферма Уоррена', ...best } : null;
+  REFS.warren = best ? { name: 'ферма Уоррена', ...best, cost: bridgeCost(best.u, best.mass) } : null;
   if (REFS.warren) Object.assign(REFS.warren, classify({ mechanism: 0, u: REFS.warren.u, mass: REFS.warren.mass }));
 }

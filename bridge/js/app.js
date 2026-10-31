@@ -22,7 +22,7 @@ function readConfig() {
     seed: Number($('cfg-seed').value) || 1,
     populationSize: Number($('cfg-pop').value),
     mutationsPerChild: Math.max(1, Number($('cfg-mut').value) || 1),
-    task: { terrainSeed: Number($('cfg-terrain').value) || 1 },
+    task: { terrainSeed: Number($('cfg-terrain').value) || 1, mode: $('cfg-mode').value },
   };
 }
 
@@ -138,6 +138,9 @@ function pickShownBridge() {
 // ---- Panels ----
 const tons = (m) => `${m.toFixed(2)} т`;
 const pct = (x) => `${(x * 100).toFixed(0)}%`;
+const strengthMode = () => TASK.mode === 'strength';
+// The cost in words: the steel, or the steel per unit of strength.
+const costText = (r) => (strengthMode() ? `${tons(r.cost)} стали на единицу прочности` : tons(r.mass));
 
 function drawStats() {
   const evo = state.evo;
@@ -145,8 +148,9 @@ function drawStats() {
   $('stats').innerHTML =
     `Seed <b>${evo.cfg.seed}</b> · поколение <b>${evo.generation.toFixed(1)}</b> · спариваний <b>${evo.matings.toLocaleString('ru')}</b>` +
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
-    (best.cls >= 2 ? ` · лучший мост <b>${tons(best.mass)}</b>` +
-      (REFS.warren ? ` (ферма Уоррена ${tons(REFS.warren.mass)}, легче в ${(REFS.warren.mass / best.mass).toFixed(2)} раза)` : '')
+    (best.cls >= 2 ? ` · лучший мост <b>${costText(best)}</b>` +
+      (REFS.warren ? ` (ферма Уоррена ${costText(REFS.warren)}, ${strengthMode() ? 'эффективнее' : 'легче'} ` +
+        `в ${(REFS.warren.cost / best.cost).toFixed(2)} раза)` : '')
       : ' · ни один мост ещё не держит') +
     ` · без улучшений ${Math.floor(evo.generationsWithoutImprovement)} пок.` +
     (state.stopReason ? ` · <span class="stopped">Остановлено: ${state.stopReason}` +
@@ -180,14 +184,26 @@ function drawScoreInfo() {
       'и поднимает оценку, поэтому эволюция сначала учится просто стоять.';
     return;
   }
-  const row = (r, name) => `<tr><td>${name}</td><td><b>${tons(r.mass)}</b></td><td>${pct(r.u)}</td>` +
+  const sm = strengthMode();
+  const row = (r, name) => `<tr><td>${name}</td><td>${sm ? '' : '<b>'}${tons(r.mass)}${sm ? '' : '</b>'}</td><td>${pct(r.u)}</td>` +
+    (sm ? `<td>×${(1 / r.u).toFixed(2)}</td><td><b>${r.u > 1 ? '—' : tons(r.u * r.mass)}</b></td>` : '') +
     `<td>${(r.sag * 1000).toFixed(0)} мм</td><td>${r.supports}</td><td>${r.bars.filter((bar) => bar.used).length}</td></tr>`;
-  const table = '<table class="score-table"><tr><th>Мост</th><th>Сталь</th><th>Загрузка</th><th>Прогиб</th><th>Опор</th><th>Стержней</th></tr>' +
+  const table = '<table class="score-table"><tr><th>Мост</th><th>Сталь</th><th>Загрузка</th>' +
+    (sm ? '<th>Запас прочности</th><th>Сталь на единицу прочности</th>' : '') +
+    '<th>Прогиб</th><th>Опор</th><th>Стержней</th></tr>' +
     (b.name ? '' : row(b, '<b>этот мост</b>')) + (w ? row(w, w.name) : '') + '</table>';
   const formula = b.u > 1
     ? `оценка = 0,5 + 0,5 / загрузка = 0,5 + 0,5 / ${b.u.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`
-    : `оценка = 1 + M<sub>Уоррена</sub> / M = 1 + ${w.mass.toFixed(3)} / ${b.mass.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`;
-  $('score-info').innerHTML = table + `<div class="formula">${formula}</div>` +
+    : sm
+      ? `оценка = 1 + (u·M)<sub>Уоррена</sub> / (u·M) = 1 + ${w.cost.toFixed(3)} / (${b.u.toFixed(3)} × ${b.mass.toFixed(3)}) = <b>${b.score.toFixed(4)}</b>`
+      : `оценка = 1 + M<sub>Уоррена</sub> / M = 1 + ${w.mass.toFixed(3)} / ${b.mass.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`;
+  const goal = sm
+    ? '<p class="note">Цель — <b>прочность на тонну стали</b>. Запас прочности 1 / u: во сколько раз можно увеличить все нагрузки, ' +
+      'пока что-то не сломается. Сталь на единицу прочности u·M — примерно столько весил бы мост, если утоньшить все его сечения ' +
+      'до загрузки 100%. Мост с загрузкой 60% таскает 40% лишней стали, поэтому здесь сразу окупается маленький стержень, ' +
+      'который разгружает самое слабое место: загрузка падает сильнее, чем растёт масса.</p>'
+    : '';
+  $('score-info').innerHTML = table + `<div class="formula">${formula}</div>` + goal +
     `<p class="note">Загрузка — худшее отношение «нагрузка / что выдержит» по всем стержням и всем положениям грузовика ` +
     `(${TRUCK_LOAD / 10} т), плюс прогиб дороги к допустимому (пролёт / ${SAG_LIMIT}). Больше 100% — мост ломается. ` +
     'Сжатый стержень выдерживает меньше растянутого: длинный и тонкий он выпучивается вбок (сила Эйлера π²EI/L²). ' +
@@ -218,7 +234,8 @@ function drawGenome() {
 
 function describeStep(s) {
   const size = (c) => (c.mechanism ? `складывается (${c.mechanism} своб. движений)`
-    : c.u > 1 ? `ломается, загрузка ${pct(c.u)}` : `держит, ${tons(c.mass)}`);
+    : c.u > 1 ? `ломается, загрузка ${pct(c.u)}`
+      : `держит, ${tons(c.mass)}` + (strengthMode() ? `, загрузка ${pct(c.u)}, u·M ${tons(c.cost)}` : ''));
   const line = (label, c) => `${label} #${c.id}: ${size(c)}, узлов ${c.genome.nodes.length}, стержней ${c.genome.bars.length}, оценка ${c.score.toFixed(4)}`;
   return [
     'Из пула случайно взяли три моста и отсортировали по оценке:',
@@ -261,6 +278,8 @@ $('btn-gen').onclick = () => {
   refreshPanels(true);
 };
 $('view-source').onchange = () => refreshPanels(true);
+// Another goal is another task (other classes, other reference): start again at once.
+$('cfg-mode').onchange = () => { setRunning(false); reset(); };
 
 reset();
 requestAnimationFrame(frame);

@@ -12,8 +12,9 @@
 
 const DECK_STEP = 4; // m, distance between the nodes of the road
 
-// The task: terrainSeed - seed of the random valley (separate from the evolution seed: same valley, different runs).
-const TASK = { terrainSeed: 1 };
+// The task: terrainSeed - seed of the random valley (separate from the evolution seed: same valley, different runs);
+// mode - the goal: 'light' (the lightest bridge) or 'strength' (the least steel per unit of strength), see fitness.js.
+const TASK = { terrainSeed: 1, mode: 'light' };
 
 // The current valley (filled by makeTerrain): span, depth, pts (surface from x = 0 to span), waterY, view bounds.
 const TERRAIN = {};

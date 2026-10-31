@@ -31,10 +31,10 @@ class Evolution {
     return { id: this.nextId++, genome, ...evaluateBridge(genome), parents };
   }
 
-  // What we remember about each generation: class counts, the best score and its mass (if it holds).
+  // What we remember about each generation: class counts, the best score and its cost (if it holds).
   snapshot() {
     const best = this.best();
-    return { counts: this.counts.slice(), best: this.bestScore, mass: best.cls >= 2 ? best.mass : null };
+    return { counts: this.counts.slice(), best: this.bestScore, cost: best.cls >= 2 ? best.cost : null };
   }
 
   get generation() {

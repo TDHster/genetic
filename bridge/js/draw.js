@@ -172,7 +172,8 @@ function niceStep(raw) {
   return 10 * p;
 }
 
-// Class shares per generation (stacked), the mass of the best bridge that holds (white) and the Warren truss (dashed).
+// Class shares per generation (stacked), the cost of the best bridge that holds (white) and of the Warren truss (dashed).
+// The cost is tonnes in both modes: the steel, or the steel per unit of strength (u·M).
 function drawPopulationChart(ctx, history, w, h) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, w, h);
@@ -193,8 +194,8 @@ function drawPopulationChart(ctx, history, w, h) {
     }
   }
 
-  // Mass axis (right): from 0 to a bit above the Warren truss (heavier bridges at the top edge).
-  const ref = REFS.warren ? REFS.warren.mass : Math.max(1, ...history.map((r) => r.mass || 0));
+  // Cost axis (right): from 0 to a bit above the Warren truss (worse bridges at the top edge).
+  const ref = REFS.warren ? REFS.warren.cost : Math.max(1, ...history.map((r) => r.cost || 0));
   const hi = 1.3 * ref;
   const sy = (m) => pad.t + ph * (1 - Math.min(hi, m) / hi);
   ctx.font = '11px system-ui, sans-serif';
@@ -209,9 +210,9 @@ function drawPopulationChart(ctx, history, w, h) {
   ctx.beginPath();
   let started = false;
   history.forEach((r, i) => {
-    if (r.mass === null) return;
+    if (r.cost === null) return;
     const x = pad.l + (i / (n - 1)) * pw;
-    if (started) ctx.lineTo(x, sy(r.mass)); else { ctx.moveTo(x, sy(r.mass)); started = true; }
+    if (started) ctx.lineTo(x, sy(r.cost)); else { ctx.moveTo(x, sy(r.cost)); started = true; }
   });
   ctx.stroke();
   ctx.lineWidth = 1;
