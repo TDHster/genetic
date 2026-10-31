@@ -10,8 +10,9 @@
 //   - a bar in tension holds while its stress N/A is below STEEL_STRESS;
 //   - a bar in compression also must not BUCKLE: a long thin bar bows sideways and folds long before
 //     the steel itself gives way. Euler's buckling force: π²·E·I / L². Twice longer - four times weaker;
-//   - the road must not sag more than span / SAG_LIMIT.
-// utilisation u = the worst ratio "load / what it can take" over all bars, positions and the sag. u ≤ 1 - it stands.
+//   - no node may move more than span / SAG_LIMIT: neither the road (its sag) nor any other node. A node hanging
+//     on two long bars at a sharp angle holds by the numbers, but swings by metres - a near-mechanism.
+// utilisation u = the worst ratio "load / what it can take" over all bars, positions and the moves. u ≤ 1 - it stands.
 //
 // What counts: only the part joined to the road. A bar through the ground cannot be built: it is ignored
 // (but its steel is counted - it was paid for). Pieces not joined to the road carry nothing and are counted too.
@@ -144,10 +145,18 @@ function evaluateBridge(genome, detail) {
   for (let i = 1; i < D - 1; i++) {
     for (const c of cases) sag = Math.max(sag, -(d0.disp[i].v + c.disp[i].v));
   }
-  const sagU = sag / (TERRAIN.span / SAG_LIMIT);
-  if (sagU > u) { u = sagU; worst = { bar: -1, why: 'прогиб' }; }
+  // The biggest move of any node (the road too) over the truck positions.
+  let drift = 0, driftNode = 0;
+  tNodes.forEach((p, k) => {
+    for (const c of cases) {
+      const move = Math.hypot(d0.disp[k].u + c.disp[k].u, d0.disp[k].v + c.disp[k].v);
+      if (move > drift) { drift = move; driftNode = k; }
+    }
+  });
+  const driftU = drift / (TERRAIN.span / SAG_LIMIT);
+  if (driftU > u) { u = driftU; worst = { bar: -1, why: driftNode < D ? 'прогиб' : 'сдвиг узла' }; }
 
-  const result = { ...base, u, sag, worst, ...classify({ mechanism: 0, u, mass }) };
+  const result = { ...base, u, sag, drift, worst, ...classify({ mechanism: 0, u, mass }) };
   if (detail) {
     // Forces and displacements for a truck at road node i (i = 0: no truck), indexed like `pts`.
     result.state = (i) => {
@@ -216,7 +225,7 @@ function sizeUp(genome) {
     let changed = false;
     r.bars.forEach((bar, e) => {
       // Overloaded bars one size up; if only the sag fails, all bars that are not yet the thickest.
-      if ((bar.u > 1 || r.worst.why === 'прогиб') && bar.s < SECTIONS.length - 1) {
+      if ((bar.u > 1 || r.worst.bar < 0) && bar.s < SECTIONS.length - 1) {
         genome.bars[e][2]++;
         changed = true;
       }

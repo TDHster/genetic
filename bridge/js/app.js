@@ -90,10 +90,11 @@ function truckX() {
   return Math.min(1, t) * TERRAIN.span;
 }
 
-// The sag is millimetres to centimetres: enlarge it so that the biggest one is ~1/25 of the span on the picture.
+// The moves are millimetres to centimetres: enlarge them so that the biggest one (of any node, not only the road)
+// is ~1/25 of the span on the picture.
 function sagScale(b) {
-  if (!$('show-sag').checked || !b.state || !b.sag) return 0;
-  return Math.max(1, TERRAIN.span / 25 / b.sag);
+  if (!$('show-sag').checked || !b.state || !b.drift) return 0;
+  return Math.max(1, TERRAIN.span / 25 / b.drift);
 }
 
 function drawShown() {
@@ -226,7 +227,7 @@ function drawScoreInfo() {
     : '';
   $('score-info').innerHTML = table + `<div class="formula">${formula}</div>` + goal +
     `<p class="note">Загрузка — худшее отношение «нагрузка / что выдержит» по всем стержням и всем положениям грузовика ` +
-    `(${TRUCK_LOAD / 10} т), плюс прогиб дороги к допустимому (пролёт / ${SAG_LIMIT}). Больше 100% — мост ломается. ` +
+    `(${TRUCK_LOAD / 10} т), плюс прогиб дороги и сдвиг любого узла к допустимому (пролёт / ${SAG_LIMIT}). Больше 100% — мост ломается. ` +
     'Сжатый стержень выдерживает меньше растянутого: длинный и тонкий он выпучивается вбок (сила Эйлера π²EI/L²). ' +
     'Поэтому сжатые стержни у хороших мостов короткие и толстые, а растянутые — длинные и тонкие. ' +
     'Ферма Уоррена — классический мост из треугольников над дорогой, опирается только на берега; ' +
