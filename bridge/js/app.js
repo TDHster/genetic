@@ -22,7 +22,7 @@ function readConfig() {
     seed: Number($('cfg-seed').value) || 1,
     populationSize: Number($('cfg-pop').value),
     mutationsPerChild: Math.max(1, Number($('cfg-mut').value) || 1),
-    task: { terrainSeed: Number($('cfg-terrain').value) || 1, mode: $('cfg-mode').value },
+    task: { terrainSeed: Number($('cfg-terrain').value) || 1, mode: $('cfg-mode').value, budgetFactor: Number($('cfg-budget').value) },
   };
 }
 
@@ -139,6 +139,8 @@ function pickShownBridge() {
 const tons = (m) => `${m.toFixed(2)} т`;
 const pct = (x) => `${(x * 100).toFixed(0)}%`;
 const strengthMode = () => TASK.mode === 'strength';
+const budgetMode = () => TASK.mode === 'budget';
+const times = (x) => `×${x.toFixed(2)}`;
 // The cost in words: the steel, or the steel per unit of strength.
 const costText = (r) => (strengthMode() ? `${tons(r.cost)} стали на единицу прочности` : tons(r.mass));
 
@@ -148,7 +150,10 @@ function drawStats() {
   $('stats').innerHTML =
     `Seed <b>${evo.cfg.seed}</b> · поколение <b>${evo.generation.toFixed(1)}</b> · спариваний <b>${evo.matings.toLocaleString('ru')}</b>` +
     (state.running ? ` · ${Math.round(state.rate).toLocaleString('ru')}/с` : '') +
-    (best.cls >= 2 ? ` · лучший мост <b>${costText(best)}</b>` +
+    (budgetMode() ? ` · бюджет ${tons(TASK.budget)}` + (best.cls >= 2 ? ` · лучший мост: запас прочности <b>${times(best.strength)}</b>` +
+      (REFS.warren ? ` (ферма Уоррена из той же стали ${times(REFS.warren.strength)}, прочнее в ${(best.strength / REFS.warren.strength).toFixed(2)} раза)` : '')
+      : ' · ни один мост ещё не уложился в бюджет')
+    : best.cls >= 2 ? ` · лучший мост <b>${costText(best)}</b>` +
       (REFS.warren ? ` (ферма Уоррена ${costText(REFS.warren)}, ${strengthMode() ? 'эффективнее' : 'легче'} ` +
         `в ${(REFS.warren.cost / best.cost).toFixed(2)} раза)` : '')
       : ' · ни один мост ещё не держит') +
@@ -184,20 +189,34 @@ function drawScoreInfo() {
       'и поднимает оценку, поэтому эволюция сначала учится просто стоять.';
     return;
   }
-  const sm = strengthMode();
-  const row = (r, name) => `<tr><td>${name}</td><td>${sm ? '' : '<b>'}${tons(r.mass)}${sm ? '' : '</b>'}</td><td>${pct(r.u)}</td>` +
+  const sm = strengthMode(), bm = budgetMode();
+  const row = (r, name) => `<tr><td>${name}</td><td>${sm ? '' : '<b>'}${tons(r.mass)}${sm ? '' : '</b>'}` +
+    (bm ? ` из ${tons(TASK.budget)}` : '') + `</td><td>${pct(r.u)}</td>` +
     (sm ? `<td>×${(1 / r.u).toFixed(2)}</td><td><b>${r.u > 1 ? '—' : tons(r.u * r.mass)}</b></td>` : '') +
+    (bm ? `<td><b>${times(1 / r.u)}</b></td>` : '') +
     `<td>${(r.sag * 1000).toFixed(0)} мм</td><td>${r.supports}</td><td>${r.bars.filter((bar) => bar.used).length}</td></tr>`;
   const table = '<table class="score-table"><tr><th>Мост</th><th>Сталь</th><th>Загрузка</th>' +
-    (sm ? '<th>Запас прочности</th><th>Сталь на единицу прочности</th>' : '') +
+    (sm ? '<th>Запас прочности</th><th>Сталь на единицу прочности</th>' : '') + (bm ? '<th>Запас прочности</th>' : '') +
     '<th>Прогиб</th><th>Опор</th><th>Стержней</th></tr>' +
     (b.name ? '' : row(b, '<b>этот мост</b>')) + (w ? row(w, w.name) : '') + '</table>';
-  const formula = b.u > 1
+  const formula = bm
+    ? (b.mass > TASK.budget
+      ? `дороже бюджета: x = (S / S<sub>Уоррена</sub>) · (B / M)<sup>${BUDGET_PENALTY}</sup> = (${(1 / b.u).toFixed(3)} / ${w.strength.toFixed(3)}) · ` +
+        `(${TASK.budget.toFixed(3)} / ${b.mass.toFixed(3)})<sup>${BUDGET_PENALTY}</sup>; оценка = 0,5 + 0,5 · x / (1 + x) = <b>${b.score.toFixed(4)}</b>`
+      : `оценка = 1 + S / S<sub>Уоррена</sub> = 1 + ${(1 / b.u).toFixed(3)} / ${w.strength.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`)
+    : b.u > 1
     ? `оценка = 0,5 + 0,5 / загрузка = 0,5 + 0,5 / ${b.u.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`
     : sm
       ? `оценка = 1 + (u·M)<sub>Уоррена</sub> / (u·M) = 1 + ${w.cost.toFixed(3)} / (${b.u.toFixed(3)} × ${b.mass.toFixed(3)}) = <b>${b.score.toFixed(4)}</b>`
       : `оценка = 1 + M<sub>Уоррена</sub> / M = 1 + ${w.mass.toFixed(3)} / ${b.mass.toFixed(3)} = <b>${b.score.toFixed(4)}</b>`;
-  const goal = sm
+  const goal = bm
+    ? `<p class="note">Цель — <b>самый прочный мост из ${tons(TASK.budget)} стали</b> (бюджет — масса фермы Уоррена × ${TASK.budgetFactor}). ` +
+      'Запас прочности S = 1 / u: во сколько раз можно увеличить все нагрузки, пока что-то не сломается. ' +
+      'Держать грузовик не обязательно: при маленьком бюджете его может не выдержать ничто, но один мост всё равно прочнее другого. ' +
+      'Эталон — ферма Уоррена, усиленная из той же стали: инженер утолщает самый загруженный стержень, пока хватает бюджета. ' +
+      `Мост дороже бюджета всегда проигрывает мосту в бюджете, но сильный дорогой лучше слабого: перерасход штрафуется степенью ${BUDGET_PENALTY}, ` +
+      'и путь к хорошему мосту часто идёт через «чуть дороже».</p>'
+    : sm
     ? '<p class="note">Цель — <b>прочность на тонну стали</b>. Запас прочности 1 / u: во сколько раз можно увеличить все нагрузки, ' +
       'пока что-то не сломается. Сталь на единицу прочности u·M — примерно столько весил бы мост, если утоньшить все его сечения ' +
       'до загрузки 100%. Мост с загрузкой 60% таскает 40% лишней стали, поэтому здесь сразу окупается маленький стержень, ' +
@@ -234,6 +253,7 @@ function drawGenome() {
 
 function describeStep(s) {
   const size = (c) => (c.mechanism ? `складывается (${c.mechanism} своб. движений)`
+    : budgetMode() ? `${c.mass > TASK.budget ? 'дороже бюджета' : 'в бюджете'}, ${tons(c.mass)}, запас прочности ${times(1 / c.u)}`
     : c.u > 1 ? `ломается, загрузка ${pct(c.u)}`
       : `держит, ${tons(c.mass)}` + (strengthMode() ? `, загрузка ${pct(c.u)}, u·M ${tons(c.cost)}` : ''));
   const line = (label, c) => `${label} #${c.id}: ${size(c)}, узлов ${c.genome.nodes.length}, стержней ${c.genome.bars.length}, оценка ${c.score.toFixed(4)}`;
@@ -279,7 +299,12 @@ $('btn-gen').onclick = () => {
 };
 $('view-source').onchange = () => refreshPanels(true);
 // Another goal is another task (other classes, other reference): start again at once.
-$('cfg-mode').onchange = () => { setRunning(false); reset(); };
+function showBudget() {
+  $('budget-label').style.display = $('cfg-mode').value === 'budget' ? '' : 'none';
+}
+$('cfg-mode').onchange = () => { showBudget(); setRunning(false); reset(); };
+$('cfg-budget').onchange = () => { setRunning(false); reset(); };
+showBudget();
 
 reset();
 requestAnimationFrame(frame);

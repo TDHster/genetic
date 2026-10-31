@@ -27,6 +27,18 @@
 //                    were thinned until it is loaded to 100% (roughly). A bridge loaded to 60% wastes 40% of its
 //                    steel, so here a small bar that unloads the weakest place pays off at once - in the 'light'
 //                    mode it pays off only after other bars get thinner, too.
+//   'budget' mode - the STRONGEST bridge from a given amount of steel B (TASK.budget, t). Strength S = 1 / u:
+//     how many times all the loads could grow before something breaks (the checks are linear in the loads).
+//     - over the budget (M > B): score = 0.5 + 0.5 · x / (1 + x), x = S / S_warren · (B / M)^BUDGET_PENALTY. Such
+//       bridges always lose to the ones within the budget, but compete among themselves: the stronger and the less
+//       over the budget, the better (thinning all sections by k makes S up to k² times smaller - buckling -
+//       while (B/M)^4 grows k⁴ times, so the way into the budget pays off; with the power 2 evolution never got
+//       into a budget of 0.5 Warren). A hard wall at the budget (score by B/M only)
+//       left evolution stuck far below the reference on tight budgets - the way to a better bridge often
+//       goes through "a bit too expensive";
+//     - within the budget: score = 1 + S / S_warren, the reference is the Warren truss made as strong as
+//       possible from the same steel. Here the bridge does not have to hold the truck: with a small budget
+//       nothing may hold it, and still one bridge is stronger than another.
 
 const ROAD_LOAD = 20;      // kN per metre of road
 const TRUCK_LOAD = 300;    // kN (a 30 t truck)
@@ -35,12 +47,15 @@ const STEEL_WEIGHT = 78.5; // kN/m³
 const STEEL_DENSITY = 7.85; // t/m³
 const SAG_LIMIT = 250;
 
-const CLASS_NAMES = ['складывается (механизм)', 'стоит, но ломается', '', '', ''];
-// The names of the classes that hold depend on the goal: setTask puts them into CLASS_NAMES.
+const CLASS_NAMES = ['складывается (механизм)', '', '', '', ''];
+// The names of classes 1..4 depend on the goal: setTask puts them into CLASS_NAMES.
 const MODE_CLASS_NAMES = {
-  light: ['держит, не легче эталона', 'держит, легче эталона', 'легче эталона в полтора раза'],
-  strength: ['держит, не эффективнее эталона', 'держит, эффективнее эталона', 'эффективнее эталона в полтора раза'],
+  light: ['стоит, но ломается', 'держит, не легче эталона', 'держит, легче эталона', 'легче эталона в полтора раза'],
+  strength: ['стоит, но ломается', 'держит, не эффективнее эталона', 'держит, эффективнее эталона', 'эффективнее эталона в полтора раза'],
+  budget: ['стоит, но дороже бюджета', 'в бюджете, не прочнее эталона', 'прочнее эталона', 'прочнее эталона в полтора раза'],
 };
+const BUDGET_PENALTY = 4; // the power of B / M for bridges over the budget
+const BUDGET_STEPS = 400; // limit of the loop that thickens the reference within the budget
 const CLASS_COLORS = ['#3a2a5a', '#b3412f', '#d08a2c', '#3fbf5f', '#f0c040'];
 const LIGHT_FACTOR = 1.5;
 
@@ -153,6 +168,18 @@ const bridgeCost = (u, mass) => (TASK.mode === 'strength' ? u * mass : mass);
 
 function classify(m) {
   if (m.mechanism) return { cls: 0, score: 0.5 / (1 + m.mechanism), mechanism: m.mechanism };
+  if (TASK.mode === 'budget') {
+    if (m.mass > TASK.budget) {
+      // Over the budget: below every bridge within it, but a strong one is still better than a weak one.
+      const ref = REFS.warren ? REFS.warren.strength : 1 / m.u;
+      const x = (1 / m.u / ref) * Math.pow(TASK.budget / m.mass, BUDGET_PENALTY);
+      return { cls: 1, score: 0.5 + 0.5 * x / (1 + x), mechanism: 0 };
+    }
+    const strength = 1 / m.u;
+    const ref = REFS.warren ? REFS.warren.strength : strength;
+    const cls = strength <= ref ? 2 : strength < ref * LIGHT_FACTOR ? 3 : 4;
+    return { cls, score: 1 + strength / ref, strength, mechanism: 0 };
+  }
   if (m.u > 1) return { cls: 1, score: 0.5 + 0.5 / m.u, mechanism: 0 };
   const cost = bridgeCost(m.u, m.mass);
   const ref = REFS.warren ? REFS.warren.cost : cost;
@@ -164,6 +191,8 @@ function classify(m) {
 // at height h, no supports but the two banks. Its sections are picked by the usual engineer's loop:
 // start thin, make every overloaded bar one size thicker, test again. We try a few heights and keep the best
 // one for the goal (the lightest, or the one with the least steel per unit of strength).
+// For the 'budget' goal the loop is different (fillBudget): start thin, make the most loaded bar one size
+// thicker while the steel stays within the budget, keep the strongest height.
 function warrenGenome(h) {
   const D = deckCount();
   const genome = { nodes: [], bars: [] };
@@ -197,9 +226,27 @@ function sizeUp(genome) {
   return null;
 }
 
+function fillBudget(genome) {
+  let r = null;
+  for (let step = 0; step < BUDGET_STEPS; step++) {
+    r = evaluateBridge(genome);
+    if (r.mechanism) return null;
+    // The most loaded bar that can still grow (the sag counts too: then the most loaded bar helps most).
+    let pick = -1;
+    r.bars.forEach((bar, e) => { if (bar.s < SECTIONS.length - 1 && (pick < 0 || bar.u > r.bars[pick].u)) pick = e; });
+    if (pick < 0) break;
+    const bar = r.bars[pick];
+    const extra = STEEL_DENSITY * (SECTIONS[bar.s + 1].A - SECTIONS[bar.s].A) * bar.L;
+    if (r.mass + extra > TASK.budget) break;
+    genome.bars[pick][2]++;
+  }
+  return r.mass <= TASK.budget ? { genome, ...r } : null;
+}
+
 function setTask(task) {
   Object.assign(TASK, task);
-  CLASS_NAMES.splice(2, 3, ...MODE_CLASS_NAMES[TASK.mode]);
+  CLASS_NAMES.splice(1, 4, ...MODE_CLASS_NAMES[TASK.mode]);
+  TASK.budget = Infinity; // set below, from the Warren truss
   makeTerrain(TASK.terrainSeed);
   for (const key of Object.keys(REFS)) delete REFS[key];
   resetNodeIds();
@@ -208,7 +255,17 @@ function setTask(task) {
     const r = sizeUp(warrenGenome(TERRAIN.span / k));
     if (r && (!best || bridgeCost(r.u, r.mass) < bridgeCost(best.u, best.mass))) best = r;
   }
+  if (TASK.mode === 'budget') {
+    // The budget: the steel of the lightest Warren truss (found above) times the factor;
+    // 0.15 t per metre of the span if no Warren truss holds.
+    TASK.budget = (TASK.budgetFactor || 1) * (best ? best.mass : 0.15 * TERRAIN.span);
+    best = null;
+    for (const k of [4, 5, 6, 7, 8, 10, 12]) {
+      const r = fillBudget(warrenGenome(TERRAIN.span / k));
+      if (r && (!best || r.u < best.u)) best = r;
+    }
+  }
   // Ids of the reference nodes are not reused by the genomes of evolution.
-  REFS.warren = best ? { name: 'ферма Уоррена', ...best, cost: bridgeCost(best.u, best.mass) } : null;
+  REFS.warren = best ? { name: 'ферма Уоррена', ...best, cost: bridgeCost(best.u, best.mass), strength: 1 / best.u } : null;
   if (REFS.warren) Object.assign(REFS.warren, classify({ mechanism: 0, u: REFS.warren.u, mass: REFS.warren.mass }));
 }
