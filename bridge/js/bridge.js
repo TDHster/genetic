@@ -8,7 +8,7 @@
 //   bars  - pairs of node keys plus the section (index into SECTIONS). A node key: a road node is its
 //           index 0..D, a free node is its id (D+1, D+2, ...). The road bars are in `bars` too: evolution
 //           chooses their sections, but can never remove them - the road must be there.
-// Bars cross each other freely (one passes in front of the other), they are joined only at nodes.
+// Bars may cross each other: where they do, the scoring joins them with a hinge (fitness.js, joinCrossings).
 
 // Steel tube sections: 8 sizes, each 1.5 times the area of the previous one (15..256 cm²).
 // A tube with the wall 1/20 of its radius: A = 2πr·(r/20) = πr²/10, second moment of area I = A·r²/2.

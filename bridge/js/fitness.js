@@ -14,6 +14,9 @@
 //     on two long bars at a sharp angle holds by the numbers, but swings by metres - a near-mechanism.
 // utilisation u = the worst ratio "load / what it can take" over all bars, positions and the moves. u ≤ 1 - it stands.
 //
+// CROSSINGS: bars that cross are joined there by a hinge (joinCrossings): a truss drawn on paper has no bars
+// passing one in front of the other. Each of them works as two shorter bars - and buckles later.
+//
 // What counts: only the part joined to the road. A bar through the ground cannot be built: it is ignored
 // (but its steel is counted - it was paid for). Pieces not joined to the road carry nothing and are counted too.
 //
@@ -72,13 +75,13 @@ function evaluateBridge(genome, detail) {
   for (const q of genome.nodes) { index.set(q.id, pts.length); pts.push({ key: q.id, x: q.x, y: q.y, fixed: isSupport(q) }); }
 
   let mass = 0;
-  const all = genome.bars.map(([a, b, s]) => {
+  const genes = genome.bars.map(([a, b, s]) => {
     const p = pts[index.get(a)], q = pts[index.get(b)];
     const L = Math.hypot(q.x - p.x, q.y - p.y);
     mass += STEEL_DENSITY * SECTIONS[s].A * L;
-    const buried = barInGround(p, q);
-    return { a: index.get(a), b: index.get(b), s, L, buried, used: false, u: 0 };
+    return { a: index.get(a), b: index.get(b), s, L, buried: barInGround(p, q) };
   });
+  const all = joinCrossings(pts, genes);
 
   // Joined to the road: walk from the road nodes along the bars that can be built. Supports are walls:
   // we do not walk through the ground to another piece (it would not help the road anyway).
@@ -107,7 +110,7 @@ function evaluateBridge(genome, detail) {
   });
   const supports = tNodes.filter((p) => p.fixed).length;
   const truss = makeTruss(tNodes, tBars);
-  const base = { pts, bars: all, mass, supports, reached };
+  const base = { pts, bars: all, mass, supports, reached, crossings: pts.filter((p) => p.cross).length };
   if (truss.mechanism) return { ...base, ...classify({ mechanism: truss.mechanism, mass }) };
 
   // Load case "dead": the road and the steel.
@@ -173,6 +176,60 @@ function evaluateBridge(genome, detail) {
   return result;
 }
 
+// CROSSINGS: two bars that cross are welded together - a hinge where they meet. Each bar is cut there into pieces,
+// and every piece works as a bar of its own (shorter, so it buckles later). The genome is not changed:
+// the hinge comes from the geometry. Crossings closer than CROSS_MARGIN to an end of a bar are ignored
+// (a tiny piece would be a hinge at the node anyway). Bars through the ground are not cut: they do not work.
+// Returns the pieces { a, b, s, L, buried, e, used, u } (e - the index of the bar in the genome);
+// the crossing hinges are added to `pts` with cross = true.
+const CROSS_MARGIN = 0.05; // m
+function joinCrossings(pts, genes) {
+  const cuts = genes.map(() => []);
+  // Bounding boxes first: most pairs of bars are far apart.
+  const box = genes.map((g) => {
+    const p = pts[g.a], q = pts[g.b];
+    return [Math.min(p.x, q.x), Math.max(p.x, q.x), Math.min(p.y, q.y), Math.max(p.y, q.y)];
+  });
+  for (let i = 0; i < genes.length; i++) {
+    const g = genes[i], bi = box[i];
+    if (g.buried || g.L <= CROSS_MARGIN * 2) continue;
+    const p = pts[g.a], rx = pts[g.b].x - p.x, ry = pts[g.b].y - p.y;
+    for (let j = i + 1; j < genes.length; j++) {
+      const h = genes[j], bj = box[j];
+      if (bj[0] > bi[1] || bj[1] < bi[0] || bj[2] > bi[3] || bj[3] < bi[2]) continue;
+      if (h.buried || h.L <= CROSS_MARGIN * 2 || h.a === g.a || h.a === g.b || h.b === g.a || h.b === g.b) continue;
+      // p + t·r = q + s·d
+      const q = pts[h.a], dx = pts[h.b].x - q.x, dy = pts[h.b].y - q.y;
+      const den = rx * dy - ry * dx;
+      if (Math.abs(den) < 1e-9) continue; // parallel
+      const t = ((q.x - p.x) * dy - (q.y - p.y) * dx) / den;
+      const s = ((q.x - p.x) * ry - (q.y - p.y) * rx) / den;
+      const mt = CROSS_MARGIN / g.L, ms = CROSS_MARGIN / h.L;
+      if (t <= mt || t >= 1 - mt || s <= ms || s >= 1 - ms) continue;
+      const x = p.x + t * rx, y = p.y + t * ry;
+      // Three bars through one point share one hinge.
+      let k = pts.findIndex((o) => o.cross && Math.hypot(o.x - x, o.y - y) < 1e-6);
+      if (k < 0) { k = pts.length; pts.push({ key: null, x, y, fixed: false, cross: true }); }
+      cuts[i].push({ t, k });
+      cuts[j].push({ t: s, k });
+    }
+  }
+  const pieces = [];
+  genes.forEach((g, e) => {
+    if (!cuts[e].length) {
+      pieces.push({ a: g.a, b: g.b, s: g.s, L: g.L, buried: g.buried, e, used: false, u: 0 });
+      return;
+    }
+    const stops = [{ t: 0, k: g.a }, ...cuts[e].sort((m, n) => m.t - n.t), { t: 1, k: g.b }];
+    for (let n = 1; n < stops.length; n++) {
+      if (stops[n].k === stops[n - 1].k) continue;
+      pieces.push({ a: stops[n - 1].k, b: stops[n].k, s: g.s, L: g.L * (stops[n].t - stops[n - 1].t),
+        buried: g.buried, e, used: false, u: 0 });
+    }
+  });
+  return pieces;
+}
+
 const bridgeCost = (u, mass) => (TASK.mode === 'strength' ? u * mass : mass);
 
 function classify(m) {
@@ -222,17 +279,21 @@ function sizeUp(genome) {
     const r = evaluateBridge(genome);
     if (r.mechanism) return null;
     if (r.u <= 1) return { genome, ...r };
-    let changed = false;
-    r.bars.forEach((bar, e) => {
-      // Overloaded bars one size up; if only the sag fails, all bars that are not yet the thickest.
-      if ((bar.u > 1 || r.worst.bar < 0) && bar.s < SECTIONS.length - 1) {
-        genome.bars[e][2]++;
-        changed = true;
-      }
-    });
-    if (!changed) return null;
+    // Overloaded bars one size up; if only the sag fails, all bars that are not yet the thickest.
+    // A bar cut by crossings is one bar of the genome (bar.e): it grows once.
+    const grow = new Set();
+    for (const bar of r.bars) if ((bar.u > 1 || r.worst.bar < 0) && bar.s < SECTIONS.length - 1) grow.add(bar.e);
+    if (!grow.size) return null;
+    for (const e of grow) genome.bars[e][2]++;
   }
   return null;
+}
+
+// Full length of the bar e of the genome (its pieces between crossings together).
+function geneLength(genome, e) {
+  const [a, b] = genome.bars[e];
+  const p = nodeByKey(genome, a), q = nodeByKey(genome, b);
+  return Math.hypot(q.x - p.x, q.y - p.y);
 }
 
 function fillBudget(genome) {
@@ -241,13 +302,12 @@ function fillBudget(genome) {
     r = evaluateBridge(genome);
     if (r.mechanism) return null;
     // The most loaded bar that can still grow (the sag counts too: then the most loaded bar helps most).
-    let pick = -1;
-    r.bars.forEach((bar, e) => { if (bar.s < SECTIONS.length - 1 && (pick < 0 || bar.u > r.bars[pick].u)) pick = e; });
-    if (pick < 0) break;
-    const bar = r.bars[pick];
-    const extra = STEEL_DENSITY * (SECTIONS[bar.s + 1].A - SECTIONS[bar.s].A) * bar.L;
+    let pick = null;
+    for (const bar of r.bars) if (bar.s < SECTIONS.length - 1 && (!pick || bar.u > pick.u)) pick = bar;
+    if (!pick) break;
+    const extra = STEEL_DENSITY * (SECTIONS[pick.s + 1].A - SECTIONS[pick.s].A) * geneLength(genome, pick.e);
     if (r.mass + extra > TASK.budget) break;
-    genome.bars[pick][2]++;
+    genome.bars[pick.e][2]++;
   }
   return r.mass <= TASK.budget ? { genome, ...r } : null;
 }

@@ -90,11 +90,13 @@ function truckX() {
   return Math.min(1, t) * TERRAIN.span;
 }
 
-// The moves are millimetres to centimetres: enlarge them so that the biggest one (of any node, not only the road)
-// is ~1/25 of the span on the picture.
+// The moves are millimetres to centimetres: they are enlarged SAG_DRAW times, the same for every bridge,
+// so a stiff bridge looks stiff (the allowed move span / 250 is drawn as span / 12.5). Only a bridge that
+// moves more than span / 8 on the picture (a broken one) gets a smaller scale, so it stays in the picture.
+const SAG_DRAW = 20;
 function sagScale(b) {
   if (!$('show-sag').checked || !b.state || !b.drift) return 0;
-  return Math.max(1, TERRAIN.span / 25 / b.drift);
+  return Math.min(SAG_DRAW, TERRAIN.span / 8 / b.drift);
 }
 
 function drawShown() {
@@ -169,17 +171,27 @@ function drawBridgeInfo() {
   const b = state.shown;
   const who = b.name ? `Эталон: ${b.name}`
     : `Мост #${b.id} (${b.parents ? `потомок #${b.parents[0]} и #${b.parents[1]}` : 'из случайного начального пула'})`;
-  const used = b.bars.filter((bar) => bar.used).length;
-  const buried = b.bars.filter((bar) => bar.buried).length;
-  const junk = b.bars.length - used - buried;
+  const { used, buried, junk } = barCounts(b);
   $('bridge-info').innerHTML = `<div>${who} · класс: <b>${CLASS_NAMES[b.cls]}</b> · оценка <b>${b.score.toFixed(4)}</b> · ` +
     `сталь <b>${tons(b.mass)}</b> · стержней ${used}` +
     (buried ? ` · <span class="bad">сквозь грунт ${buried}</span>` : '') +
     (junk ? ` · <span class="muted">не связаны с дорогой ${junk}</span>` : '') +
-    ` · свободных узлов ${b.genome.nodes.length} · опор ${b.supports}` +
+    ` · свободных узлов ${b.genome.nodes.length}` + (b.crossings ? ` · шарниров на пересечениях ${b.crossings}` : '') +
+    ` · опор ${b.supports}` +
     (b.mechanism ? '' : ` · загрузка <b>${pct(b.u)}</b> (самое слабое место: ${b.worst.why})` +
       ` · прогиб ${(b.sag * 1000).toFixed(0)} мм из ${(TERRAIN.span / SAG_LIMIT * 1000).toFixed(0)}`) +
     '</div>';
+}
+
+// Bars of the genome: working, through the ground, not joined to the road. A bar cut by crossings into
+// pieces (b.bars) is still one bar: pieces are grouped by bar.e.
+function barCounts(b) {
+  const used = new Set(), buried = new Set();
+  for (const bar of b.bars) {
+    if (bar.buried) buried.add(bar.e);
+    else if (bar.used) used.add(bar.e);
+  }
+  return { used: used.size, buried: buried.size, junk: b.genome.bars.length - used.size - buried.size };
 }
 
 function drawScoreInfo() {
@@ -197,7 +209,7 @@ function drawScoreInfo() {
     (bm ? ` из ${tons(TASK.budget)}` : '') + `</td><td>${pct(r.u)}</td>` +
     (sm ? `<td>×${(1 / r.u).toFixed(2)}</td><td><b>${r.u > 1 ? '—' : tons(r.u * r.mass)}</b></td>` : '') +
     (bm ? `<td><b>${times(1 / r.u)}</b></td>` : '') +
-    `<td>${(r.sag * 1000).toFixed(0)} мм</td><td>${r.supports}</td><td>${r.bars.filter((bar) => bar.used).length}</td></tr>`;
+    `<td>${(r.sag * 1000).toFixed(0)} мм</td><td>${r.supports}</td><td>${barCounts(r).used}</td></tr>`;
   const table = '<table class="score-table"><tr><th>Мост</th><th>Сталь</th><th>Загрузка</th>' +
     (sm ? '<th>Запас прочности</th><th>Сталь на единицу прочности</th>' : '') + (bm ? '<th>Запас прочности</th>' : '') +
     '<th>Прогиб</th><th>Опор</th><th>Стержней</th></tr>' +
