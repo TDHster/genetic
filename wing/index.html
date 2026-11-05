@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Профиль крыла</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./lib/three.module.js", "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Эволюция профиля крыла</h1>
+    <p>Генетический алгоритм рисует <b>сечение крыла</b>: 12 чисел задают гладкую форму верхней и нижней поверхности.
+      Цель — <b>наибольшее аэродинамическое качество</b> L/D (сколько метров планер пролетает вперёд на метр высоты)
+      при числе Рейнольдса 10⁶, как у планера или небольшого дрона. Профиль должен быть не тоньше нормы (внутри живёт лонжерон)
+      и иметь <b>запас до срыва</b> 3°, а момент на пикирование — не больше, чем может удержать хвост самолёта. Поток считается в 2D, как в инженерных программах вроде XFOIL: идеальная жидкость
+      панельным методом плюс пограничный слой. Результат продувается в 3D-<b>аэродинамической трубе</b> с дымом и весами.
+      Эталон — NACA 4412, классический профиль 1930-х.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="8 потомков: родители из турниров, каждый потомок продувается, за каждого погибает худший из трёх">1 пачка (8 потомков)</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул
+        <select id="cfg-pop">
+          <option>50</option><option selected>100</option><option>200</option><option>400</option>
+        </select>
+      </label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <label title="Число Рейнольдса: скорость × хорда / вязкость. Маленькое — модель самолёта, большое — планер">Re
+        <select id="cfg-re">
+          <option value="500000">5·10⁵ (модель)</option><option value="1000000" selected>10⁶ (дрон, планер)</option>
+          <option value="3000000">3·10⁶ (лёгкий самолёт)</option>
+        </select>
+      </label>
+      <label title="Тоньше — штраф (t / норма)⁴: в тонкое крыло не влезет лонжерон">Толщина от
+        <select id="cfg-tmin">
+          <option value="0.08">8 %</option><option value="0.12" selected>12 %</option><option value="0.15">15 %</option>
+        </select>
+      </label>
+      <label title="Момент на пикирование: самолёту с хвостом он стоит балансировки, летающему крылу без хвоста нужен Cm ≥ 0">Cm
+        <select id="cfg-cm">
+          <option value="none">любой</option><option value="-0.1" selected>не ниже −0,1 (самолёт)</option>
+          <option value="0">не ниже 0 (летающее крыло)</option>
+        </select>
+      </label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-ref-on" type="checkbox"> лучше эталона на
+        <input id="stop-ref" type="number" min="0" step="any" value="50"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="60"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="300"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="views">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший профиль в пуле</option>
+            <option value="reference">Эталон: NACA 4412</option>
+            <option value="n0012">NACA 0012 (симметричный)</option>
+            <option value="n2412">NACA 2412 (крыло Cessna)</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="gallery" disabled>Выбранный в галерее</option>
+            <option value="imported" disabled>Загруженный из файла</option>
+          </select>
+        </h2>
+        <div class="modes">
+          <label class="inline">Угол атаки <input id="alpha" type="range" min="-4" max="20" step="0.5" value="4"><output id="alpha-out"></output></label>
+          <button id="btn-work" title="Поставить угол, на котором профиль получил оценку">рабочий угол</button>
+        </div>
+      </div>
+      <div id="view3d"></div>
+      <div class="modes view-toggles">
+        <label class="inline"><input id="show-smoke" type="checkbox" checked> дым</label>
+        <label class="inline"><input id="show-pressure" type="checkbox"> стрелки давления</label>
+        <label class="inline"><input id="show-forces" type="checkbox" checked> силы</label>
+        <label class="inline">Поток
+          <select id="time-scale">
+            <option value="0.02">в 50 раз медленнее</option><option value="0.005" selected>в 200 раз медленнее</option><option value="0.001">в 1000 раз медленнее</option>
+          </select>
+        </label>
+      </div>
+      <div class="alpha-legend">
+        <span>Давление на крыле: <span class="cp-bar"></span> разрежение · как вдали · подпор</span>
+        <span>Дым — скорость: <span class="speed-bar"></span> медленнее · как вдали · быстрее</span>
+        <span><b class="lift">━</b> подъёмная сила, <b class="drag">━</b> сопротивление ×20</span>
+      </div>
+      <div class="live" id="live"></div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Поток слева направо. Клубы дыма выпускаются
+        одновременно: над крылом они убегают вперёд — воздух сверху быстрее, и «равного времени» сверху и снизу нет.
+        Белая линия на крыле — переход слоя в турбулентный, красная — отрыв. Дым считается тем же панельным методом,
+        что и оценка; след за крылом и зона отрыва нарисованы приближённо.</p>
+    </section>
+    <section class="panel chart-grid">
+      <h2>Давление вдоль хорды</h2>
+      <canvas id="cp-canvas" width="560" height="320"></canvas>
+      <p class="note">−Cp вверх: голубая — верх, оранжевая — низ; площадь между ними — подъёмная сила. Пик разрежения у носка,
+        дальше воздух тормозится — это «горка», на которой устаёт пограничный слой. ▲ — переход, ✕ — отрыв.</p>
+      <h2>Поляра: Cl от Cd</h2>
+      <canvas id="polar-canvas" width="560" height="220"></canvas>
+      <p class="note">Касательная из нуля — наилучшее качество. Голубая — этот профиль, жёлтый пунктир — эталон;
+        бледные точки — срыв (там модель только намекает).</p>
+      <h2>Cl и качество L/D от угла атаки</h2>
+      <canvas id="cla-canvas" width="560" height="220"></canvas>
+      <p class="note">Сплошная — Cl, пунктир — L/D (шкала справа). Зелёная полоса — рабочий угол и запас до срыва.
+        Бледная часть — за срывом: там модель не умеет терять подъёмную силу.</p>
+    </section>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Из чего складывается оценка</h2>
+      <div id="score-info" class="info"></div>
+      <h2>Профиль (геном)</h2>
+      <canvas id="genome-canvas" width="560" height="230"></canvas>
+      <p class="note">Каждая поверхность — сумма 6 гладких «бугров» (полиномы Бернштейна) с весами из генома, умноженная на
+        √x·(1 − x): корень даёт круглый носок, (1 − x) — острую кромку. Тонкие линии — вклады бугров верхней поверхности.</p>
+      <div id="genome-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить этот профиль (JSON)</button>
+        <button id="btn-dat" title="Формат Selig: x y от задней кромки по верху к носку и по низу обратно — открывается в XFOIL и программах для моделистов">Скачать координаты (.dat)</button>
+        <label class="file-button">Загрузить профиль<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — эталон.</p>
+
+      <h2>Галерея: лучшие в пуле</h2>
+      <div id="gallery" class="gallery"></div>
+      <p class="note">Нажми на профиль, чтобы продуть его в трубе.</p>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.</div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Геометрия</b> (<code>js/geometry.js</code>): параметризация CST (Кульфан, 2008) — 6 весов на поверхность.
+        Классические NACA 4-digit переводятся в те же 12 чисел подгонкой методом наименьших квадратов.</li>
+      <li><b>Идеальный поток</b> (<code>js/panel.js</code>): панельный метод Хесса — Смита. Контур режется на 120 отрезков,
+        на каждом источник, на всех общий вихрь. Вихрь — это и есть подъёмная сила; его силу задаёт условие Кутты:
+        воздух плавно сходит с острой задней кромки.</li>
+      <li><b>Пограничный слой</b> (<code>js/boundary.js</code>): ламинарный участок — метод Твейтса, переход в турбулентный —
+        критерий Мишеля (или ламинарный отрыв), турбулентный участок — метод Хеда, отрыв при H &gt; 2,4.
+        Сопротивление — формула Сквайра — Янга по толщине слоя у задней кромки.</li>
+      <li><b>Связка</b> (<code>js/aero.js</code>): слой «отодвигает» внешний поток (выдув на поверхности), идеальный поток
+        пересчитывается — 4 прохода. Так считается потеря подъёмной силы из-за вязкости. Поляра — углы от −4° до 20° через 0,5°.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): качество на рабочем угле × штраф за толщину (× штраф за момент, если задан).</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в остальных проектах: трое, худший умирает,
+        потомок с одной мутацией (бугор, толщина или кривизна). Потомки считаются пачками по 8 в фоновых потоках.</li>
+      <li><b>Труба</b> (<code>js/view3d.js</code>, three.js), графики (<code>js/draw2d.js</code>) и управление
+        (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+    <p class="note">Честно о точности: по сравнению с XFOIL модель даёт сопротивление примерно на четверть больше (переход
+      предсказывается раньше), а срыв — на пару градусов раньше; за срывом подъёмная сила не падает, поэтому эти точки бледные
+      и в оценку не идут. Для сравнения профилей между собой этого хватает, для постройки самолёта — проверяйте в XFOIL.</p>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/linalg.js"></script>
+  <script src="js/geometry.js"></script>
+  <script src="js/panel.js"></script>
+  <script src="js/boundary.js"></script>
+  <script src="js/aero.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw2d.js"></script>
+  <script src="js/app.js"></script>
+  <script type="module" src="js/view3d.js"></script>
+</body>
+</html>
