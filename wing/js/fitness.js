@@ -61,9 +61,13 @@ function analyzeAirfoil(g, setup, fullPolar) {
     score = work.ld * thin * moment;
     cls = thin < 1 ? 2 : moment < 1 ? 3 : 4;
   } else {
-    // no working angle: a small score by the best attached point, so that the first pool still has a gradient
+    // no working angle: a small score, so that the first pool still has a gradient -
+    // by the best attached point, or, if the flow never stays attached (a circle, a brick), by the narrowest wake:
+    // 0.5 at the edge of attached flow, less for a wider wake. Streamlining comes before lift.
     const attached = points.filter((p) => p.attached && p.cl > 0);
-    score = attached.length ? 0.1 * Math.max(...attached.map((p) => p.ld)) * thin : 0.01;
+    const wakes = points.filter((p) => !p.failed).map((p) => p.wake);
+    if (attached.length) score = 0.1 * Math.max(...attached.map((p) => p.ld)) * thin;
+    else score = wakes.length ? 0.5 * AERO.attachedWake / Math.max(AERO.attachedWake, Math.min(...wakes)) : 0.01;
     cls = 1;
   }
   let clMax = 0, alphaStall = null;

@@ -12,12 +12,12 @@
 //   accept()  - when the score is known: pick who dies, put the child in (uses the rng).
 // BATCH children are proposed from the same pool, then accepted in the order they were proposed.
 // So a run depends only on the seed - not on how many workers there are or which finishes first.
-// No species here (unlike vawt): every airfoil has the same 12 numbers, the task is smooth.
+// No species here (unlike vawt): every airfoil has the same 14 numbers, the task is smooth.
 
 const BATCH = 8;                 // children scored at once
 
 class Evolution {
-  // cfg: { seed, populationSize, mutationsPerChild }.
+  // cfg: { seed, populationSize, mutationsPerChild, start } (start - see START_SHAPES).
   // The first pool must be scored too: firstGenomes() -> score them -> start(genomes, results).
   constructor(cfg) {
     this.cfg = cfg;
@@ -29,7 +29,7 @@ class Evolution {
 
   firstGenomes() {
     const list = [];
-    for (let i = 0; i < this.cfg.populationSize; i++) list.push(randomAirfoil(this.rng));
+    for (let i = 0; i < this.cfg.populationSize; i++) list.push(randomAirfoil(this.rng, this.cfg.start));
     return list;
   }
 

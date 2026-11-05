@@ -1,5 +1,6 @@
 // Run the evolution of airfoils without a browser.
 // Usage: node tools/headless.js [generations] [populationSize] [seed] [Re] [min thickness] [min Cm or none; default -0.1]
+//        [start: circle | brick | lumps; default circle]
 //        node tools/headless.js polar [NACA code] [Re]     - print a polar of a NACA airfoil (model check)
 const fs = require('fs');
 const path = require('path');
@@ -34,7 +35,9 @@ const re = Number(process.argv[5] || 1e6);
 const tMin = Number(process.argv[6] || 0.12);
 const cmMin = process.argv[7] === undefined ? run('SETUP').cmMin : process.argv[7] === 'none' ? null : Number(process.argv[7]);
 
-globalThis.cfg = { seed, populationSize, mutationsPerChild: 1 };
+const start = process.argv[8] || 'circle';
+
+globalThis.cfg = { seed, populationSize, mutationsPerChild: 1, start };
 globalThis.setup = { ...run('SETUP'), re, tMin, cmMin };
 const started = Date.now();
 const evo = run('new Evolution(cfg)');
@@ -46,7 +49,7 @@ const genomes = evo.firstGenomes();
 evo.start(genomes, genomes.map(score));
 
 const describe = (d) => `${d.score.toFixed(2)} (L/D ${fx(d.ld, 1)} при α ${fx(d.alpha, 1)}°, Cl ${fx(d.cl, 3)}, Cd ${fx(d.cd, 5)}, ` +
-  `Cm ${fx(d.cm, 3)}, толщина ${(100 * d.t).toFixed(1)}% в ${(100 * d.tAt).toFixed(0)}%, кривизна ${(100 * d.camber).toFixed(1)}% в ${(100 * d.camberAt).toFixed(0)}%, ` +
+  `Cm ${fx(d.cm, 3)}, ${d.genome ? `n1 ${d.genome.n1.toFixed(2)} n2 ${d.genome.n2.toFixed(2)}, ` : ""}толщина ${(100 * d.t).toFixed(1)}% в ${(100 * d.tAt).toFixed(0)}%, кривизна ${(100 * d.camber).toFixed(1)}% в ${(100 * d.camberAt).toFixed(0)}%, ` +
   `переход ${fx(d.xtrU, 2)}/${fx(d.xtrL, 2)}, Cl max ${d.clMax.toFixed(2)})`;
 
 function report() {
@@ -55,7 +58,7 @@ function report() {
   console.log(`gen ${evo.generation.toFixed(0).padStart(4)} | ${shares.join(', ')} | best ${describe(best)}`);
 }
 
-console.log(`Re ${re.toExponential(1)}, толщина от ${(100 * tMin).toFixed(0)}%, Cm от ${cmMin === null ? '—' : cmMin}`);
+console.log(`Re ${re.toExponential(1)}, толщина от ${(100 * tMin).toFixed(0)}%, Cm от ${cmMin === null ? '—' : cmMin}, старт: ${start}`);
 console.log(`эталон NACA ${refCode}: ${describe(reference)}`);
 report();
 let lastReport = 0;

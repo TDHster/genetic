@@ -92,7 +92,7 @@ function marchSide(P, side, re) {
     if (k === m - 1) return (u[k] - u[k - 1]) / (s[k] - s[k - 1]);
     return (u[k + 1] - u[k - 1]) / (s[k + 1] - s[k - 1]);
   };
-  let transitionX = null, separationX = null, bubble = false;
+  let transitionX = null, separationX = null, separationIdx = null, bubble = false;
 
   // 1. Laminar: Thwaites' integral, trapezoids; the first piece from the stagnation point has ue growing linearly from 0.
   let integral = 0, k = 0;
@@ -130,6 +130,7 @@ function marchSide(P, side, re) {
         if (!separated && headH(y / (ub * th)) >= BL.separationH) {
           separated = true;
           separationX = P.xm[idx[j]];
+          separationIdx = idx[j];
         }
       }
       if (!separated) y = Math.max(y, u[j] * th * 3.33);   // keep H1 in the range of the correlation
@@ -139,13 +140,15 @@ function marchSide(P, side, re) {
     }
   }
 
-  // Squire-Young: the momentum the layer lost by the tail, carried far downstream.
-  const last = m - 1;
-  const cd = 2 * theta[last] * u[last] ** ((Math.min(H[last], 2.5) + 5) / 2);
+  // Squire-Young: the momentum the layer lost by the tail, carried far downstream. Taken as the largest value along
+  // the side, not just at the last point: on a blunt back face the speed falls to zero at the rear stagnation point,
+  // and the formula would say "no drag" (the evolution found this hole from a brick start). Lost momentum is not regained.
+  let cd = 0;
+  for (let j = 0; j < m; j++) cd = Math.max(cd, 2 * theta[j] * u[j] ** ((Math.min(H[j], 2.5) + 5) / 2));
   let cdf = 0;
   for (let j = 1; j < m; j++) cdf += (s[j] - s[j - 1]) * (cf[j] * u[j] ** 2 + cf[j - 1] * u[j - 1] ** 2) / 2;
   cdf += s[0] * cf[0] * u[0] ** 2 / 2;
-  return { idx, s, u, theta, H, cf, turbulent, transitionX, separationX, bubble, cd, cdf };
+  return { idx, s, u, theta, H, cf, turbulent, transitionX, separationX, separationIdx, bubble, cd, cdf };
 }
 
 // The whole boundary layer. Also the "blowing": the slowed air pushes the outer flow away from the surface

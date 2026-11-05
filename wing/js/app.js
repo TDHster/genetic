@@ -84,6 +84,7 @@ function readConfig() {
     seed: Number($('cfg-seed').value) || 1,
     populationSize: Number($('cfg-pop').value),
     mutationsPerChild: Math.max(1, Number($('cfg-mut').value) || 1),
+    start: $('cfg-start').value,
   };
 }
 
@@ -290,7 +291,10 @@ function drawScoreInfo() {
   const rows = [];
   rows.push(['Рабочий угол', w ? `${w.alpha.toFixed(1)}°` : '<span class="bad">нет</span>',
     `лучшее качество среди углов, у которых поток не отрывается и ещё ${s.margin}° выше`]);
-  rows.push(['Качество L/D', w ? w.ld.toFixed(1) : '—', w ? `Cl ${w.cl.toFixed(3)} / Cd ${w.cd.toFixed(5)}` : 'профиль срывается раньше, чем набирает запас']);
+  const neverAttached = !w && !a.points.some((p) => p.attached);
+  rows.push(['Качество L/D', w ? w.ld.toFixed(1) : '—', w ? `Cl ${w.cl.toFixed(3)} / Cd ${w.cd.toFixed(5)}`
+    : neverAttached ? `поток срывается на всех углах; оценка — по самому узкому следу за телом: 0,5 × ${AERO.attachedWake} / след`
+    : 'профиль срывается раньше, чем набирает запас; оценка — 0,1 × лучшее L/D без отрыва']);
   rows.push(['× толщина', a.thin.toFixed(3), `${pct(a.geo.t)} при норме ${pct(s.tMin, 0)}${a.thin < 1 ? ': штраф (t / норма)⁴' : ''}`]);
   if (s.cmMin !== null) rows.push(['× момент', a.moment.toFixed(3), w ? `Cm ${w.cm.toFixed(3)}, нужно не ниже ${s.cmMin}` : '']);
   rows.push(['= оценка', `<b>${d.score.toFixed(2)}</b>`, d === ref ? 'это эталон' : `эталон ${ref.name}: ${ref.score.toFixed(2)} (${d.score >= ref.score ? '+' : ''}${(100 * (d.score / ref.score - 1)).toFixed(1)}%)`]);
@@ -310,6 +314,7 @@ function drawGenome() {
     <tr><th>Имя</th><td>${d.name || '#' + d.id}${d.parents ? ` (родители #${d.parents.join(', #')})` : ''}</td></tr>
     <tr><th>Верх (6 весов)</th><td>${list(g.u)}</td></tr>
     <tr><th>Низ (6 весов)</th><td>${list(g.l)}</td></tr>
+    <tr><th>Тип тела</th><td>носок n1 = ${g.n1.toFixed(2)}, хвост n2 = ${g.n2.toFixed(2)} (круг 0,5 / 0,5; кирпич ≈ 0; профиль 0,5 / 1)</td></tr>
     <tr><th>Толщина</th><td>${pct(geo.t)} в ${pct(geo.tAt, 0)} хорды; на 80% хорды ${pct(geo.tRear)}</td></tr>
     <tr><th>Кривизна</th><td>${pct(geo.camber)} в ${pct(geo.camberAt, 0)} хорды</td></tr>
     <tr><th>Радиус носка</th><td>${pct(geo.noseRadius, 2)} хорды</td></tr>
@@ -403,8 +408,9 @@ $('btn-export').onclick = () => {
 // Selig .dat: name, then x y from the tail over the upper surface to the nose and along the lower surface back.
 $('btn-dat').onclick = () => {
   const g = state.shown.genome, lines = [`GA-airfoil-${state.shown.id}`];
-  for (let k = STATIONS.length - 1; k >= 0; k--) lines.push(`${STATIONS[k].toFixed(6)} ${cstY(g.u, STATIONS[k]).toFixed(6)}`);
-  for (let k = 1; k < STATIONS.length; k++) lines.push(`${STATIONS[k].toFixed(6)} ${cstY(g.l, STATIONS[k]).toFixed(6)}`);
+  const { upper, lower } = airfoilShape(g);
+  for (let k = upper.length - 1; k >= 0; k--) lines.push(`${upper[k][0].toFixed(6)} ${upper[k][1].toFixed(6)}`);
+  for (let k = 1; k < lower.length; k++) lines.push(`${lower[k][0].toFixed(6)} ${lower[k][1].toFixed(6)}`);
   download(`airfoil-${state.shown.id}.dat`, lines.join('\n') + '\n', 'text/plain');
 };
 
@@ -419,7 +425,12 @@ $('file-import').onchange = async (e) => {
       return list.slice();
     };
     if (!g) throw new Error('нет поля genome');
-    const genome = fixWeights({ u: nums(g.u, 'u'), l: nums(g.l, 'l') });
+    const exp = (v, name) => {
+      if (v !== undefined && !Number.isFinite(v)) throw new Error(`поле ${name}: нужно число`);
+      return v;
+    };
+    // n1, n2 are optional: genomes saved before they existed are of the airfoil class
+    const genome = fixWeights({ u: nums(g.u, 'u'), l: nums(g.l, 'l'), n1: exp(g.n1, 'n1'), n2: exp(g.n2, 'n2') });
     state.imported = { id: 'file', name: file.name, genome, ...evaluateAirfoil(genome, state.setup), parents: null };
     $('view-source').querySelector('option[value=imported]').disabled = false;
     $('view-source').value = 'imported';

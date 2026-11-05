@@ -85,9 +85,23 @@ function marker(ctx, x, y, kind, color) {
 // Outline of a genome as canvas points: X(x), Y(y) map chord coordinates.
 function outline(g, X, Y) {
   const pts = [];
-  for (let k = STATIONS.length - 1; k >= 0; k--) pts.push([X(STATIONS[k]), Y(cstY(g.l, STATIONS[k]))]);
-  for (let k = 1; k < STATIONS.length; k++) pts.push([X(STATIONS[k]), Y(cstY(g.u, STATIONS[k]))]);
+  const shape = airfoilShape(g);
+  for (let k = 0; k < shape.x.length; k++) pts.push([X(shape.x[k]), Y(shape.y[k])]);
   return pts;
+}
+
+// Fits genomes into a box: the chord across the whole width if the body is thin enough (then x matches the chart above),
+// otherwise smaller and centred (a circle from the first pool is as tall as it is long). Returns X(x), Y(y) and the scale.
+function fitBox(genomes, left, width, top, height) {
+  let lo = 0, hi = 0;
+  for (const g of genomes) {
+    if (!g) continue;
+    const s = airfoilShape(g);
+    for (const y of s.y) { lo = Math.min(lo, y); hi = Math.max(hi, y); }
+  }
+  const scale = Math.min(width, height / Math.max(1e-6, hi - lo));
+  const x0 = left + (width - scale) / 2, mid = top + height / 2 + (hi + lo) / 2 * scale;
+  return { X: (x) => x0 + x * scale, Y: (y) => mid - y * scale, scale };
 }
 
 // ---- Pressure along the chord, with the airfoil and its boundary layer underneath ----
@@ -119,8 +133,8 @@ function drawCpChart(ctx, g, at, refG, w, h) {
   }
   // the airfoil below the chart (chord along the x axis of the chart, not turned: the angle is seen in the tunnel);
   // the boundary layer displacement thickness exaggerated ×5
-  const y0 = f.pad.t + f.ph + 30 + profileH * 0.72, scale = f.pw;
-  const toCanvas = (x, y) => [f.pad.l + x * scale, y0 - y * scale];
+  const box = fitBox([g, refG], f.pad.l, f.pw, f.pad.t + f.ph + 36, profileH - 26);
+  const toCanvas = (x, y) => [box.X(x), box.Y(y)];
   ctx.save();
   ctx.beginPath(); ctx.rect(0, f.pad.t + f.ph + 30, w, profileH - 14); ctx.clip();
   if (refG) polyline(ctx, outline(refG, (x) => x, (y) => y).map(([x, y]) => toCanvas(x, y)), COLORS.reference, 1, [4, 3]);
@@ -213,11 +227,11 @@ function drawClAlpha(ctx, points, refPoints, alphaNow, work, margin, w, h) {
 function drawGenome2d(ctx, g, refG, w, h) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, w, h);
-  const scale = w - 40, X = (x) => 20 + x * scale, Y = (y) => h * 0.55 - y * scale;
+  const { X, Y } = fitBox([g, refG], 20, w - 40, 12, h - 40);
   ctx.strokeStyle = COLORS.grid;
   ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(1), Y(0)); ctx.stroke();
   for (let i = 0; i <= CST_ORDER; i++) {
-    const pts = STATIONS.map((x) => [X(x), Y(classFunction(x) * g.u[i] * bernstein(i, x))]);
+    const pts = STATIONS.map((x) => [X(x), Y(classFunction(x, g) * g.u[i] * bernstein(i, x))]);
     polyline(ctx, pts, `hsla(${200 + 25 * i}, 70%, 65%, 0.55)`, 1);
   }
   if (refG) polyline(ctx, outline(refG, X, Y), COLORS.reference, 1, [4, 3]);
@@ -225,7 +239,7 @@ function drawGenome2d(ctx, g, refG, w, h) {
   ctx.fillStyle = 'rgba(91, 208, 255, 0.12)';
   ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.fill();
   polyline(ctx, pts, COLORS.airfoil, 2);
-  polyline(ctx, STATIONS.map((x) => [X(x), Y((cstY(g.u, x) + cstY(g.l, x)) / 2)]), COLORS.lower, 1, [3, 3]);
+  polyline(ctx, STATIONS.map((x) => [X(x), Y((cstY(g.u, x, g) + cstY(g.l, x, g)) / 2)]), COLORS.lower, 1, [3, 3]);
   ctx.fillStyle = COLORS.muted;
   ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'left';
@@ -236,7 +250,7 @@ function drawGenome2d(ctx, g, refG, w, h) {
 function drawMini(ctx, g, w, h, color) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, w, h);
-  const scale = w - 8, X = (x) => 4 + x * scale, Y = (y) => h * 0.55 - y * scale;
+  const { X, Y } = fitBox([g], 4, w - 8, 4, h - 8);
   const pts = outline(g, X, Y);
   ctx.fillStyle = color || 'rgba(91, 208, 255, 0.35)';
   ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.fill();
