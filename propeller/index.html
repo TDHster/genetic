@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Винт подводной лодки</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./lib/three.module.js", "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Эволюция винта подводной лодки</h1>
+    <p>Генетический алгоритм проектирует гребной винт дизель-электрической подлодки: <b>сколько лопастей</b>,
+      какого они диаметра, шага и ширины, какой толщины и изгиба профиль, насколько лопасти загнуты назад саблей (откос).
+      Главное для подлодки — <b>тишина</b>: винт не должен гудеть на частоте лопастей, шуметь турбулентностью и, хуже всего,
+      <b>кавитировать</b> — вода у лопасти закипает от разрежения, а схлопывающиеся пузыри слышно за десятки километров.
+      Шум считается на патруле: 10 узлов на перископной глубине (вал на 12 м), где кавитация начинается раньше всего. Второе — <b>полный ход</b>: лодка не должна стать медленнее.
+      Эталон — классический семилопастной саблевидный винт подлодок 1970–80-х.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="8 потомков: родители из турниров, каждый потомок проходит расчёт, за каждого погибает худший из трёх">1 пачка (8 потомков)</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул винтов
+        <select id="cfg-pop">
+          <option>50</option><option selected>100</option><option>200</option><option>400</option>
+        </select>
+      </label>
+      <label title="Защита новинок (как в NEAT): винты делятся на виды по числу лопастей и насадке, у каждого вида свои места в пуле"><input id="cfg-species" type="checkbox" checked> виды</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <label title="Тише эталона — суммарный шум в дБ против эталона. Тише шума моря — с какого расстояния гидроакустик слышит винт на фоне шума океана">Цель
+        <select id="cfg-goal"><option value="reference">тише эталона</option><option value="sea" selected>тише шума моря</option></select></label>
+      <span id="sea-settings" class="settings">
+        <label>Море <select id="cfg-sea"><option value="calm">тихое</option><option value="moderate" selected>умеренное</option><option value="rough">свежее</option></select></label>
+        <label title="Цель: гидроакустик не слышит лодку дальше этого расстояния">Не слышно дальше <input id="cfg-range" type="number" min="10" step="50" value="500"> м</label>
+      </span>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-ref-on" type="checkbox"> лучше эталона на
+        <input id="stop-ref" type="number" min="0" step="any" value="15"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="200"> поколений</label>
+      <label id="stop-range-wrap"><input id="stop-range-on" type="checkbox" checked> лодку не слышно дальше цели</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="1000"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="views">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший винт в пуле</option>
+            <option value="reference">Эталон: 7-лопастной саблевидный</option>
+            <option value="ship">Корабельный 4-лопастной (без откоса)</option>
+            <option value="five">5-лопастной с умеренным откосом</option>
+            <option value="jet">Насадка (pump-jet), сделана вручную</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="species" disabled>Лучший винт выбранного вида</option>
+            <option value="imported" disabled>Загруженный из файла</option>
+          </select>
+        </h2>
+        <div class="modes">
+          <label class="inline">Скорость <input id="speed" type="range" min="2" max="24" step="0.5" value="10"><output id="speed-out"></output></label>
+          <label class="inline">Глубина <input id="depth" type="range" min="10" max="300" step="1" value="12"><output id="depth-out"></output></label>
+          <button id="btn-patrol" title="Скорость и глубина, при которых считается оценка">Патруль</button>
+          <button id="btn-full" title="Полный ход на глубине 150 м">Полный ход</button>
+          <button id="btn-sound" title="Как звучит винт: шум, бьющийся с частотой лопастей, и треск кавитации — из тех же уровней, что в оценке">🔊 Звук</button>
+          <label class="inline">Время
+            <select id="time-scale">
+              <option value="0.1">0,1×</option><option value="0.25">¼×</option><option value="1" selected>1×</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="view3d"></div>
+      <div class="alpha-legend">
+        <span>Лопасть — запас до кавитации: <span class="bar"></span> далеко · близко · кипит</span>
+        <span>белые пузыри — кавитация, белая нить с конца лопасти — кавитирует концевой вихрь</span>
+      </div>
+      <div class="live" id="live"></div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Лодка идёт влево, вода течёт мимо неё вправо.
+        Перед винтом — четыре кормовых стабилизатора крестом: за каждым остаётся полоса медленной воды.
+        Ползунки меняют только показ; оценка всегда считается на патруле.</p>
+    </section>
+    <section class="panel chart-grid">
+      <div class="top-pair">
+        <div>
+          <div class="pair-head">
+            <h2>Винт в 3D</h2>
+            <button id="btn-static-reset" title="Вернуть вид сзади-сбоку, в три четверти">Вид ¾</button>
+          </div>
+          <div id="static3d"></div>
+          <p class="note">Тот же винт отдельно и неподвижно; мышью можно крутить. Насадка полупрозрачная.</p>
+        </div>
+        <div>
+          <div class="pair-head"><h2>Что слышит гидроакустик</h2></div>
+          <canvas id="spectrum-canvas" width="300" height="300"></canvas>
+          <p class="note">Оранжевые линии — тоны лопастей (Z·n и кратные), синяя — сплошной шум, красная — кавитация;
+            жёлтый пунктир — эталон.</p>
+        </div>
+      </div>
+      <h2>Шум по скорости</h2>
+      <canvas id="speed-canvas" width="560" height="190"></canvas>
+      <p class="note">С ростом скорости шум растёт плавно, пока не начнётся кавитация, — тогда скачком. На глубине кавитация
+        начинается позже: давление воды не даёт ей закипеть. Попробуй ползунок глубины.</p>
+      <h2>Неравномерность следа за стабилизаторами</h2>
+      <canvas id="wake-canvas" width="560" height="180"></canvas>
+      <p class="note">Серые столбики — гармоники от четырёх стабилизаторов (4, 8, 12… раз за оборот), зелёные — от S лопаток
+        статора насадки. Винт с Z лопастями чувствует только гармоники Z, 2Z, 3Z (оранжевые): они толкают винт вдоль вала. Гармоники Z ± 1 (сиреневые) раскачивают
+        вал вбок, через подшипник. 4 или 8 лопастей попадают в резонанс вдоль вала, у нечётного числа одна из Z ± 1 — чётная.</p>
+      <h2>Запас до кавитации вдоль лопасти</h2>
+      <canvas id="cav-canvas" width="560" height="180"></canvas>
+      <p class="note">Разрежение на лопасти, делённое на число кавитации σ, в худшем месте за оборот (наверху — меньше глубина,
+        в следе стабилизатора — больше угол атаки). Выше единицы — вода закипает.</p>
+    </section>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Из чего складывается оценка</h2>
+      <div id="score-info" class="info"></div>
+      <h2>Винт (геном)</h2>
+      <canvas id="profile-canvas" width="560" height="250"></canvas>
+      <div id="genome-info" class="info"></div>
+      <h2>Кривые действия винта</h2>
+      <canvas id="curves-canvas" width="560" height="180"></canvas>
+      <p class="note">Упор и момент винта по относительной поступи J. Белая точка — рабочая: здесь упор равен сопротивлению лодки
+        (пунктир). Она одна на все скорости — меняются только обороты.</p>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить этот винт (JSON)</button>
+        <label class="file-button">Загрузить винт<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — эталон.</p>
+
+      <h2>Виды</h2>
+      <p class="note">Вид — число лопастей и есть ли насадка. Квота — сколько мест в пуле положено виду: свежий 9-лопастной винт
+        сначала хуже настроенного 5-лопастного, а только что появившаяся насадка — хуже открытого винта, пока ротор не
+        подстроится; без защиты они погибли бы в первом турнире. Нажми на строку, чтобы посмотреть лучший винт вида.</p>
+      <div id="species-info" class="info"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.</div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Лодка</b> (<code>js/boat.js</code>): сопротивление корпуса, мощность и момент мотора, наибольший диаметр винта,
+        след за корпусом — медленная вода у ступицы и узкие полосы за четырьмя стабилизаторами и рубкой (гармоники Фурье).</li>
+      <li><b>Винт</b> (<code>js/propeller.js</code>): геном — число лопастей, диаметр, шаг и ширина в 5 точках по радиусу,
+        изгиб и толщина профиля в 3 точках, откос в 3 точках; насадка (есть/нет), её длина, торможение потока и число лопаток
+        статора. Через точки проводятся гладкие кривые.</li>
+      <li><b>Гидродинамика</b> (<code>js/hydro.js</code>): теория элемента лопасти с импульсом (BEM) и поправкой Прандтля на конце.
+        Каждая полоска лопасти — профиль в потоке; добавочная скорость воды подбирается так, чтобы упор полоски равнялся
+        импульсу, который она даёт воде. Рабочая точка — где упор равен сопротивлению лодки.</li>
+      <li><b>Шум</b> (<code>js/noise.js</code>): тоны от следа стабилизаторов (с откосом и функцией Сирса), сплошной шум задней кромки,
+        кавитация на поверхности лопасти и в концевом вихре.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): 100 + 2 × (дБ тише эталона) + очки за полный ход (+1 за узел быстрее эталона,
+        −5 за узел медленнее); штрафы за прочность и налезающие лопасти.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в часах, ноге Янсена и ветряке: трое, худший умирает,
+        потомок с мутацией, виды с квотами. Потомки считаются пачками по 8 в фоновых потоках (Web Workers).</li>
+      <li><b>Картинки</b> (<code>js/draw2d.js</code>, <code>js/view3d.js</code> на three.js), звук (<code>js/sound.js</code>, Web Audio)
+        и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/boat.js"></script>
+  <script src="js/propeller.js"></script>
+  <script src="js/hydro.js"></script>
+  <script src="js/noise.js"></script>
+  <script src="js/sea.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw2d.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/app.js"></script>
+  <script type="module" src="js/view3d.js"></script>
+</body>
+</html>
