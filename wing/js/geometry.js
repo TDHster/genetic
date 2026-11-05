@@ -184,14 +184,18 @@ function copyAirfoil(g) {
 // beats the reference.
 //   circle - a circle of diameter = chord (n1 = n2 = 0.5, all weights 1) with small dents;
 //   brick  - a flat-ended block 25-35 % thick (n1 = n2 ≈ 0.05);
+//   plate  - a flat sheet with blunt ends (n1 = n2 ≈ 0.05), all weights at the nose limit: the thinnest flat body
+//            the genome allows (~9 %), thinner than the spar needs;
 //   lumps  - thick lumpy bodies of the airfoil class (round nose, sharp tail).
-const START_SHAPES = ['circle', 'brick', 'lumps'];
+const START_SHAPES = ['circle', 'brick', 'plate', 'lumps'];
 
 function randomAirfoil(rng, start = 'circle') {
   for (;;) {
     let thick, noise, n1, n2;
     if (start === 'brick') {
       thick = 0.13 + 0.04 * rng.next(); noise = 0.01; n1 = n2 = WEIGHTS.n1[0];
+    } else if (start === 'plate') {
+      thick = WEIGHTS.nose; noise = 0.002; n1 = n2 = WEIGHTS.n1[0];
     } else if (start === 'lumps') {
       thick = 0.15 + 0.15 * rng.next(); noise = 0.12; n1 = AIRFOIL_CLASS.n1; n2 = AIRFOIL_CLASS.n2;
     } else {

@@ -10,14 +10,15 @@
 
 - Браузер: только через http-сервер (общий, порт 8765, см. корневой CLAUDE.md): http://localhost:8765/wing/.
   С `file://` эволюция идёт в основном потоке, вместо 3D — подсказка про сервер.
-- Без браузера: `node tools/headless.js [поколений] [пул] [seed] [Re] [tMin] [cmMin|none] [circle|brick|lumps]` (`vm.runInThisContext`);
+- Без браузера: `node tools/headless.js [поколений] [пул] [seed] [Re] [tMin] [cmMin|none] [circle|brick|plate|lumps]` (`vm.runInThisContext`);
   `node tools/headless.js polar 4412 1e6` — поляра NACA для проверки модели.
   Одна оценка ~12 мс (Node, M1), ~84 спаривания/с в одном процессе; в браузере 8 воркеров — ~560 профилей/с.
 - Эталоны (`node tools/headless.js 200 100 <seed>`, старт с круга, Re 10⁶, t ≥ 12 %, Cm ≥ −0,1 — как на странице по умолчанию):
   NACA 4412 **101,20** (L/D 101,2 при 5°, Cl 1,003, Cd 0,00991, Cm −0,096); seed 1–3: **131,60 / 127,24 / 132,00**
   (старт 0,04 — всё срывается; на 100-м поколении 119,67 / 101,70 / 100,75).
   `200 100 1 1e6 0.12 none` → 131,45; `… 0.12 0` → 111,57 (эталон NACA 0012: 67,90); `… 0.08` → 145,29 (эталон NACA 4408: 105,52);
-  `150 100 1 1e6 0.12 -0.1 brick` → 138,55 (seed 2: 135,73); `100 100 1 1e6 0.12 -0.1 lumps` → 138,14.
+  `150 100 1 1e6 0.12 -0.1 brick` → 138,55 (seed 2: 135,73); `100 100 1 1e6 0.12 -0.1 lumps` → 138,14;
+  `150 100 1 1e6 0.12 -0.1 plate` → 135,20 (старт 0,47; лист — все веса на пределе носка 0,05, тоньше нельзя без правки предела).
   Если цифры сильно изменились, значит, поменялась модель, оценка или последовательность вызовов rng.
 - Поляры NACA (Re 10⁶): 0012 — Cd 0,0073 при 0°, Cl 0,434 при 4°; 2412 — Cl 0,229 и Cm −0,048 при 0°, L/D max ~81 при 6°;
   4412 — L/D max 101 при 5°. Невязкий Cl 0012 при 5° = 0,602, Cm 2412 = −0,053 (теория −0,053).
@@ -33,7 +34,7 @@
 |---|---|
 | `js/rng.js` | Генератор с seed (копия из `vawt`) |
 | `js/linalg.js` | `luDecompose`, `luSolve`, `solveDense` |
-| `js/geometry.js` | CST: геном `{u, l, n1, n2}`, `classFunction(x, g)` = x^n1·(1−x)^n2, `cstY(w, x, g)`; `airfoilShape` (61 точка на сторону, косинусная сетка **по длине дуги** через `DENSE_X`; узлы: хвост → низ → носок → верх → хвост), `measureAirfoil` (по x из `STATIONS`), `nacaGenome` (подгонка МНК, n1 0,5 / n2 1), `randomAirfoil(rng, start)` — `START_SHAPES` circle/brick/lumps, `crossover`, `mutate` (15 % — показатель носка/хвоста), `fixWeights` |
+| `js/geometry.js` | CST: геном `{u, l, n1, n2}`, `classFunction(x, g)` = x^n1·(1−x)^n2, `cstY(w, x, g)`; `airfoilShape` (61 точка на сторону, косинусная сетка **по длине дуги** через `DENSE_X`; узлы: хвост → низ → носок → верх → хвост), `measureAirfoil` (по x из `STATIONS`), `nacaGenome` (подгонка МНК, n1 0,5 / n2 1), `randomAirfoil(rng, start)` — `START_SHAPES` circle/brick/plate/lumps, `crossover`, `mutate` (15 % — показатель носка/хвоста), `fixWeights` |
 | `js/panel.js` | Хесс — Смит: `preparePanels` (матрица 121×121, LU один раз), `solveFlow(P, α, blowing)`, `pressureForces`, `flowVelocity` (для дыма) |
 | `js/boundary.js` | `splitAtStagnation`, `marchSide` (Твейтс → Мишель/ламинарный отрыв → Хед, Сквайр — Янг), `boundaryLayer` (+ выдув d(ue·δ*)/ds) |
 | `js/aero.js` | `analyzeAt` (4 прохода связки, релаксация 0,6; + донное сопротивление `wakeWidth`), `sweepPolar` (−4…20° через 0,5°), `ALPHAS`, `AERO` |

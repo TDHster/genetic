@@ -1,6 +1,6 @@
 // Run the evolution of airfoils without a browser.
 // Usage: node tools/headless.js [generations] [populationSize] [seed] [Re] [min thickness] [min Cm or none; default -0.1]
-//        [start: circle | brick | lumps; default circle]
+//        [start: circle | brick | plate | lumps; default circle]
 //        node tools/headless.js polar [NACA code] [Re]     - print a polar of a NACA airfoil (model check)
 const fs = require('fs');
 const path = require('path');
