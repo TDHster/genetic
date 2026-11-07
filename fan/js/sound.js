@@ -13,8 +13,8 @@
 // THE BACKGROUND (ambient.js): the same kind of band-passed noise for every part of its spectrum, plus texture:
 //   raindrops (sparse clicks), crickets (a chirping tone), distant traffic (slow swells).
 // The fan can be switched off to hear the room alone. Fan and background go through the same level scale:
-// SOUND_REF dB plays at the rms SOUND_GAIN, every 20 dB is ×10 in amplitude - so their loudness is compared honestly
-// (a quiet night is really quiet: turn the volume up). A compressor at the end keeps loud sounds from clipping.
+// SOUND_REF dB plays at the rms SOUND_GAIN, every 20 dB is ×10 in amplitude - so their loudness is compared honestly.
+// A quiet night is really quiet: a boost (setBoost, dB) lifts everything together, the balance stays. A compressor at the end keeps loud sounds from clipping.
 // Laptop speakers do not play below ~100 Hz: headphones are better.
 
 const SOUND_REF = 50;     // dB that plays at SOUND_GAIN (rms)
@@ -25,7 +25,7 @@ const WHITE_RMS = 1 / Math.sqrt(3);
 const BAND_Q = 0.6;       // a broad band, like the spectrum shape in acoustics.js
 
 const FanSound = (() => {
-  let ctx = null, n = null, ambientKey = 'none', fanOn = true;
+  let ctx = null, n = null, ambientKey = 'none', fanOn = true, boost = 0;
 
   const rmsOf = (level) => SOUND_GAIN * Math.pow(10, (level - SOUND_REF) / 20);
 
@@ -71,10 +71,13 @@ const FanSound = (() => {
     limiter.threshold.value = -6;
     limiter.ratio.value = 12;
     limiter.connect(ctx.destination);
+    const master = ctx.createGain();          // the boost for quiet scenes
+    master.gain.value = Math.pow(10, boost / 20);
+    master.connect(limiter);
     const fanBus = ctx.createGain(), ambientBus = ctx.createGain();
     fanBus.gain.value = fanOn ? 1 : 0;
-    fanBus.connect(limiter);
-    ambientBus.connect(limiter);
+    fanBus.connect(master);
+    ambientBus.connect(master);
     const white = buffer(4, 'white');
     // fan tones
     const osc = ctx.createOscillator();
@@ -100,7 +103,7 @@ const FanSound = (() => {
     const lfoDepth = ctx.createGain();
     lfo.connect(lfoDepth).connect(swish.gain);
     lfo.start();
-    n = { osc, toneGain, bands, swish, lfo, lfoDepth, lastWave: '', fanBus, ambientBus, white, ambient: [] };
+    n = { osc, toneGain, bands, swish, lfo, lfoDepth, lastWave: '', master, fanBus, ambientBus, white, ambient: [] };
     buildAmbient();
   }
 
@@ -222,6 +225,11 @@ const FanSound = (() => {
     setFan(on) {
       fanOn = on;
       if (n) n.fanBus.gain.setTargetAtTime(on ? 1 : 0, ctx.currentTime, 0.08);
+    },
+    // a volume boost (dB) for everything: quiet scenes (the night speed) are hard to hear at the true scale
+    setBoost(db) {
+      boost = db;
+      if (n) n.master.gain.setTargetAtTime(Math.pow(10, db / 20), ctx.currentTime, 0.08);
     },
     // the background: a key of AMBIENTS
     setAmbient(key) {

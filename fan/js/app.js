@@ -233,13 +233,23 @@ const night = () => state.speed === 3;
 const refNight = () => referenceNight(state.setup.ambient);
 const speedScale = () => (night() ? (state.analysis && state.analysis.night ? state.analysis.night.rpm : 0) : FAN.settings[state.speed]) / FAN.rpm;
 
-// The noise of the shown fan and of the reference at the speed setting (at the night speed - each at its own,
-// with the aerodynamics solved there).
+// The reference at the turn rate rpm, with the aerodynamics solved there (cached: the last one).
+let refAtCache = null;
+function referenceAt(rpm) {
+  if (!refAtCache || Math.abs(refAtCache.rpm - rpm) > 0.5) {
+    const g = REF_ANALYSIS.rotor, op = fanForces(g, rpm / 60, true);
+    refAtCache = { rpm, cond: noiseAt(prepareNoise(g, op), 1) };
+  }
+  return refAtCache.cond;
+}
+
+// The noise of the shown fan and of the reference at the speed setting. At the night speed the reference turns
+// as fast as the shown fan (the same breeze, roughly) - so one hears whether IT would be heard there.
 function updateCondition() {
   const a = state.analysis;
   if (night()) {
-    state.refCond = refNight().cond;
     state.cond = a && a.blows ? a.night.cond : null;
+    state.refCond = referenceAt(a && a.blows ? a.night.rpm : refNight().rpm);
     return;
   }
   const s = speedScale();
@@ -300,7 +310,16 @@ function drawLive() {
     `упор ${(a.thrust * s * s).toFixed(2)} Н, ${(a.flow * s * 60).toFixed(0)} м³/мин, ветер в 2 м ≈ ${breeze.toFixed(1)} м/с · ` +
     `${(a.power * s * s * s).toFixed(1)} Вт · у кровати <b class="${c.rating < ref.rating ? 'good' : 'bad'}">L_R ${c.rating.toFixed(1)} дБА</b> ` +
     `(дБ(A) ${c.la.toFixed(1)} + тон ${c.kt.toFixed(1)}; эталон ${ref.rating.toFixed(1)}) · самый слышный тон: ${toneText(c)}` +
-    (c.laStall > c.laRest - STALL_CLASS ? ' · <b class="bad">ревёт срыв</b>' : '') + againstText(c);
+    (c.laStall > c.laRest - STALL_CLASS ? ' · <b class="bad">ревёт срыв</b>' : '') + againstText(c) + nightText(c, ref);
+}
+
+// At the night speed: is this fan heard against the background of the goal, and the reference at the same speed?
+function nightText(c, ref) {
+  if (!night()) return '';
+  const key = state.setup.ambient, heard = (x) => audibleExcess(x, key);
+  const say = (e) => (e > 0.5 ? `<b class="bad">слышен</b> (на ${e.toFixed(1)} дБ над фоном)` : '<b class="good">не слышен</b>');
+  return `<br>на ${(c.n * 60).toFixed(0)} об/мин: этот ${say(heard(c))}, эталон на тех же оборотах ${say(heard(ref))}` +
+    ` (своя ночная скорость эталона — ${refNight().rpm.toFixed(0)} об/мин)`;
 }
 
 // How the fan is heard against the chosen background.
@@ -467,6 +486,8 @@ $('btn-reset').onclick = () => reset();
 $('btn-new-seed').onclick = () => { $('cfg-seed').value = 1 + Math.floor(Math.random() * 999999); reset(); };
 $('view-source').onchange = () => offerShown(pickShown(), true);
 function setSpeed(index) {
+  // the night is quiet by design: lift the volume of everything (fan and background together) to hear it
+  if (index === 3 && state.speed !== 3 && Number($('boost').value) === 0) setBoost(20);
   state.speed = index;
   document.querySelectorAll('.speeds button[data-speed]').forEach((o) => o.classList.toggle('active', Number(o.dataset.speed) === index));
   if (!state.analysis) return;
@@ -495,6 +516,13 @@ document.querySelectorAll('#listen button').forEach((b) => {
 $('ambient').innerHTML = Object.entries(AMBIENTS).map(([k, a]) => `<option value="${k}">${a.name}</option>`).join('');
 $('ambient').value = state.ambient;
 FanSound.setAmbient(state.ambient);
+// Volume boost for quiet scenes (dB): fan and background together, the balance between them stays.
+function setBoost(db) {
+  $('boost').value = String(db);
+  FanSound.setBoost(db);
+}
+$('boost').onchange = () => setBoost(Number($('boost').value));
+
 function setAmbient(key) {
   state.ambient = key;
   $('ambient').value = key;

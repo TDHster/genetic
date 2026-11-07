@@ -80,6 +80,9 @@
           <span class="speeds" id="listen" title="Что звучит: этот вентилятор, эталон на той же скорости или только комната — по той же шкале громкости">
             <button data-listen="this" class="active">этот</button><button data-listen="ref">эталон</button><button data-listen="off">выкл.</button>
           </span>
+          <label class="inline" title="Усиление всего звука (вентилятор и фон вместе, соотношение не меняется): ночная скорость по-честному очень тихая">Усиление
+            <select id="boost"><option value="0" selected>0 дБ</option><option value="10">+10 дБ</option><option value="20">+20 дБ</option><option value="30">+30 дБ</option></select>
+          </label>
           <label class="inline" title="Естественный фон спальни: звучит вместе с вентилятором и маскирует его. В оценку не входит — стандарт оценивает сам источник">Фон
             <select id="ambient"></select>
           </label>
