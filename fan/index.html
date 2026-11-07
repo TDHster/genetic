@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Лопасти вентилятора</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./lib/three.module.js", "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Эволюция лопастей бытового вентилятора</h1>
+    <p>Генетический алгоритм проектирует лопасти напольного вентилятора Ø 40 см, который стоит ночью в спальне в полутора метрах
+      от кровати: <b>сколько лопастей</b>, какого они диаметра, шага, ширины, изгиба и толщины, насколько загнуты <b>саблей</b>
+      и под какими углами стоят (<b>неравный шаг</b>). Мотор крутит их с постоянной скоростью — 1100 об/мин на средней скорости,
+      и они обязаны дать тот же ветер, что обычный вентилятор. Главное — <b>чтобы не мешал спать</b>: не гудел на частоте лопастей,
+      меньше шумел и не ревел срывом потока. Второе — мощность мотора. Эталон — самый обычный трёхлопастной вентилятор.
+      <b>Включи звук 🔊</b>: шум синтезируется из тех же чисел, что идут в оценку (лучше в наушниках — гул низкий). Можно добавить
+      естественный фон — тихую ночь, сверчков, дождь, город — и выключить вентилятор, чтобы услышать комнату без него.</p>
+  </header>
+
+  <section class="controls">
+    <div class="buttons">
+      <button id="btn-run" class="primary">▶ Старт</button>
+      <button id="btn-step" title="8 потомков: родители из турниров, каждый потомок проходит расчёт, за каждого погибает худший из трёх">1 пачка (8 потомков)</button>
+      <button id="btn-reset" title="Начать заново с тем же seed: стартовый пул будет точно таким же">↺ Сброс</button>
+      <button id="btn-new-seed" title="Случайный seed и сброс: новый стартовый пул">🎲 Новый seed</button>
+    </div>
+    <div class="settings">
+      <label>Пул
+        <select id="cfg-pop">
+          <option>50</option><option selected>100</option><option>200</option><option>400</option>
+        </select>
+      </label>
+      <label title="Защита новинок (как в NEAT): вентиляторы делятся на виды по числу лопастей, у каждого вида свои места в пуле"><input id="cfg-species" type="checkbox" checked> виды</label>
+      <label>Мутаций на потомка <input id="cfg-mut" type="number" min="1" max="10" value="1"></label>
+      <label>Seed <input id="cfg-seed" type="number" value="1"></label>
+      <span class="hint">настройки применяются по «Сброс»</span>
+    </div>
+    <div class="settings autostop" title="Критерии остановки проверяются во время работы. Менять можно на ходу.">
+      <span class="label">Автостоп:</span>
+      <label><input id="stop-ref-on" type="checkbox"> лучше эталона на
+        <input id="stop-ref" type="number" min="0" step="any" value="15"> %</label>
+      <label><input id="stop-stag-on" type="checkbox" checked> нет улучшений
+        <input id="stop-stag" type="number" min="1" value="150"> поколений</label>
+      <label><input id="stop-max-on" type="checkbox" checked> предел
+        <input id="stop-max" type="number" min="1" value="800"> поколений</label>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="views">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>
+          <select id="view-source">
+            <option value="best">Лучший вентилятор в пуле</option>
+            <option value="reference">Эталон: обычный 3-лопастной</option>
+            <option value="metal">Старый металлический 4-лопастной</option>
+            <option value="five">5 саблевидных лопастей</option>
+            <option value="uneven">5 саблевидных, неравный шаг</option>
+            <option value="child">Последний потомок</option>
+            <option value="loser">Последний погибший</option>
+            <option value="species" disabled>Лучший выбранного вида</option>
+            <option value="imported" disabled>Загруженный из файла</option>
+          </select>
+        </h2>
+        <div class="modes">
+          <span class="speeds" title="Скорость мотора; оценка всегда считается на «2»">
+            <button data-speed="0">1</button><button data-speed="1" class="active">2</button><button data-speed="2">3</button>
+          </span>
+          <button id="btn-sound" title="Как звучит вентилятор: тоны лопастей, шум, рёв срыва — из тех же уровней, что в оценке">🔊 Звук</button>
+          <span class="speeds" id="listen" title="Что звучит: этот вентилятор, эталон на той же скорости или только комната — по той же шкале громкости">
+            <button data-listen="this" class="active">этот</button><button data-listen="ref">эталон</button><button data-listen="off">выкл.</button>
+          </span>
+          <label class="inline" title="Естественный фон спальни: звучит вместе с вентилятором и маскирует его. В оценку не входит — стандарт оценивает сам источник">Фон
+            <select id="ambient"></select>
+          </label>
+          <label class="inline">Время
+            <select id="time-scale">
+              <option value="0.01">0,01×</option><option value="0.04" selected>0,04×</option><option value="0.15">0,15×</option><option value="1">1×</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="view3d"></div>
+      <div class="alpha-legend">
+        <span>Лопасть — угол атаки до срыва: <span class="bar"></span> далеко · близко · срыв</span>
+        <span>Струйки — воздух: сзади подсасывается, вперёд дует закрученной струёй</span>
+      </div>
+      <div class="live" id="live"></div>
+      <p class="note">Мышь: вращать, колесо: приблизить, правая кнопка: сдвинуть. Время замедлено: на 1× лопасти мелькают
+        18 раз в секунду. Сзади ротора — мотор, задняя решётка с 24 спицами и стойка: за каждой остаётся полоса медленного воздуха.</p>
+    </section>
+    <section class="panel chart-grid">
+      <div class="top-pair">
+        <div>
+          <div class="pair-head">
+            <h2>Лопасти в 3D</h2>
+            <button id="btn-static-reset" title="Вернуть вид спереди-сбоку, в три четверти">Вид ¾</button>
+          </div>
+          <div id="static3d"></div>
+          <p class="note">Тот же ротор отдельно и неподвижно; мышью можно крутить.</p>
+        </div>
+        <div>
+          <div class="pair-head"><h2>Что слышно у кровати</h2></div>
+          <canvas id="spectrum-canvas" width="300" height="300"></canvas>
+          <p class="note">Оранжевые линии — тоны, синяя — шум в полосе слуха (он маскирует тоны), серая — порог слуха,
+            зелёный пунктир — фон комнаты; жёлтый пунктир — эталон. Тон слышен, если торчит над синей, серой и зелёной.</p>
+        </div>
+      </div>
+      <h2>Откуда гул: гармоники вращения</h2>
+      <canvas id="harmonics-canvas" width="560" height="200"></canvas>
+      <p class="note">Столбики — тоны на частотах h·n (n — обороты в секунду). Контуры — те же лопасти, расставленные ровно:
+        ровные Z лопастей звучат только на h = Z, 2Z, 3Z… — это гул «частоты лопастей». Неравный шаг разбивает его на много
+        тонов послабее. Пунктир — гармоники спиц решётки (24, 48…): если Z делит 24, лопасти бьют по спицам все разом.</p>
+      <h2>Шум по оборотам</h2>
+      <canvas id="speed-canvas" width="560" height="190"></canvas>
+      <p class="note">L<sub>R</sub> — оценочный уровень (дБ(A) + штраф за слышимый тон), тонкая линия — просто дБ(A).
+        Ступеньки 1, 2, 3 — скорости переключателя.</p>
+      <h2>Угол атаки вдоль лопасти</h2>
+      <canvas id="stall-canvas" width="560" height="180"></canvas>
+      <p class="note">Полоса — как угол атаки меняется за оборот (в следе стойки и спиц он растёт), красная линия — срыв.
+        У ступицы лопасть идёт медленно, её срыв тихий; у конца — громкий.</p>
+    </section>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Из чего складывается оценка</h2>
+      <div id="score-info" class="info"></div>
+      <h2>Вентилятор (геном)</h2>
+      <canvas id="profile-canvas" width="560" height="250"></canvas>
+      <div id="genome-info" class="info"></div>
+      <div class="file-buttons">
+        <button id="btn-export">Сохранить этот вентилятор (JSON)</button>
+        <label class="file-button">Загрузить<input id="file-import" type="file" accept=".json,application/json"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Состав пула по поколениям</h2>
+      <canvas id="chart-canvas" width="560" height="220"></canvas>
+      <div id="chart-legend" class="legend"></div>
+      <p class="note">Белая линия — лучшая оценка (шкала справа), пунктир — эталон.</p>
+
+      <h2>Виды</h2>
+      <p class="note">Вид — число лопастей. Квота — сколько мест в пуле положено виду: свежий 7-лопастной вентилятор
+        сначала хуже настроенного 3-лопастного, пока его лопасти не станут нужной ширины; без защиты он погиб бы в первом
+        турнире. Нажми на строку, чтобы посмотреть лучший вентилятор вида.</p>
+      <div id="species-info" class="info"></div>
+
+      <h2>Последнее спаривание</h2>
+      <div id="step-log" class="info log">Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.</div>
+    </section>
+  </main>
+
+  <section class="panel explain">
+    <h2>Как это устроено</h2>
+    <ol>
+      <li><b>Комната</b> (<code>js/room.js</code>): воздух, мотор (1100 об/мин на средней скорости), нужный ветер (упор 2,4 Н),
+        решётка с 24 спицами и стойка позади ротора — неравномерный поток на входе как гармоники Фурье.</li>
+      <li><b>Лопасти</b> (<code>js/fan.js</code>): геном — число лопастей, диаметр, шаг и ширина в 4 точках по радиусу, изгиб
+        и толщина в 3 точках, саблевидность в 2 точках, сдвиг каждой лопасти от ровной расстановки. Ротор всегда
+        <b>уравновешен</b>: углы чуть подправляются так, чтобы центр масс был на оси (3 лопасти поэтому всегда стоят через 120°).</li>
+      <li><b>Аэродинамика</b> (<code>js/aero.js</code>): теория элемента лопасти с импульсом (BEM) для неподвижного воздуха,
+        тонкие изогнутые пластины при малых числах Рейнольдса, срыв по углу атаки и наибольшей подъёмной силе.
+        Гены шага задают форму закрутки, а общий установочный угол подбирается под нужный ветер — как на заводе.</li>
+      <li><b>Акустика</b> (<code>js/acoustics.js</code>): тоны от следа спиц и стойки (с саблей, функцией Сирса и суммой по
+        лопастям), шум задней кромки (BPM), шум турбулентности на передней кромке (Амиет), рёв срыва; дБ(A) и слышимость тона
+        по ISO 1996-2.</li>
+      <li><b>Оценка</b> (<code>js/fitness.js</code>): 100 + 2 × (дБ(A) тише эталона, с тональным штрафом) + очки за мощность;
+        штрафы за слабый ветер, перегрузку мотора, прочность пластика, тонкие стенки и налезающие лопасти.</li>
+      <li><b>Эволюция</b> (<code>js/evolution.js</code>): та же схема, что в соседних проектах: трое, худший умирает,
+        потомок с мутацией, виды с квотами. Потомки считаются пачками по 8 в фоновых потоках (Web Workers).</li>
+      <li><b>Картинки</b> (<code>js/draw2d.js</code>, <code>js/view3d.js</code> на three.js), звук (<code>js/sound.js</code>, Web Audio)
+        фон спальни (<code>js/ambient.js</code>) и управление (<code>js/app.js</code>) на эволюцию не влияют.</li>
+    </ol>
+  </section>
+
+  <script src="js/rng.js"></script>
+  <script src="js/room.js"></script>
+  <script src="js/fan.js"></script>
+  <script src="js/aero.js"></script>
+  <script src="js/acoustics.js"></script>
+  <script src="js/fitness.js"></script>
+  <script src="js/ambient.js"></script>
+  <script src="js/evolution.js"></script>
+  <script src="js/draw2d.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/app.js"></script>
+  <script type="module" src="js/view3d.js"></script>
+</body>
+</html>
