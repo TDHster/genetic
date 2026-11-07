@@ -3,16 +3,25 @@
 
 const $ = (id) => document.getElementById(id);
 
-// Fans that are not in the pool: the classic designs.
-const named = (id, genome) => ({ id, genome: copyFan(genome), ...evaluateFan(genome), parents: null });
-const CLASSICS = {
-  reference: named('ref', REFERENCE), metal: named('metal', OLD_METAL), five: named('five', FIVE_SICKLE), uneven: named('uneven', FIVE_UNEVEN),
-};
+// The goal of the score (applied on reset): quieter at the middle setting (default) or the inaudible breeze.
+function readSetup() {
+  return { goal: $('cfg-goal').value, ambient: $('cfg-ambient').value };
+}
+const silentMode = () => isSilent(state.setup);
+
+// Fans that are not in the pool: the classic designs (scored here, on the main thread, for the current goal).
+function makeClassics(setup) {
+  const named = (id, genome) => ({ id, genome: copyFan(genome), ...evaluateFan(genome, setup), parents: null });
+  return {
+    reference: named('ref', REFERENCE), metal: named('metal', OLD_METAL), five: named('five', FIVE_SICKLE), uneven: named('uneven', FIVE_UNEVEN),
+  };
+}
+let CLASSICS = makeClassics(DEFAULT_GOAL);
 const CLASSIC_NAMES = {
   ref: 'Эталон: обычный 3-лопастной', metal: 'Старый металлический 4-лопастной', five: '5 саблевидных лопастей',
   uneven: '5 саблевидных, неравный шаг',
 };
-const REF_ANALYSIS = analyzeFan(REFERENCE);
+let REF_ANALYSIS = analyzeFan(REFERENCE);
 
 const state = {
   evo: null,
@@ -33,11 +42,12 @@ const state = {
   staticView: null,
   progress: '',
   psi: 0,               // rotation of the rotor on screen
-  speed: 1,             // speed setting index (FAN.settings)
+  speed: 1,             // speed setting index (FAN.settings; 3 - the night speed)
   cond: null,           // noiseAt(...) of the shown fan at the speed setting
   refCond: null,
   listen: 'this',       // what plays: 'this' fan, 'ref' - the reference, 'off' - only the room
-  ambient: 'night',     // the background (AMBIENTS key)
+  ambient: 'night',     // the background that plays and is drawn (AMBIENTS key)
+  setup: { ...DEFAULT_GOAL },  // the goal of the current run (readSetup on reset)
 };
 
 // ---- Scoring in Web Workers (or on the main thread, when workers are not allowed) ----
@@ -59,7 +69,7 @@ const evaluator = (() => {
   const one = (w, genome) => new Promise((resolve) => {
     const id = nextId++;
     waiting.set(id, resolve);
-    w.postMessage({ id, genome });
+    w.postMessage({ id, genome, setup: state.setup });
   });
   return {
     get parallel() { return workers.length; },
@@ -71,7 +81,7 @@ const evaluator = (() => {
       if (workers.length === 0) {
         for (let k = 0; k < genomes.length; k++) {
           if (k % 8 === 0) await new Promise((r) => setTimeout(r, 0)); // let the page breathe
-          finish(k, evaluateFan(genomes[k]));
+          finish(k, evaluateFan(genomes[k], state.setup));
         }
         return results;
       }
@@ -113,6 +123,15 @@ async function reset() {
   state.stopReason = null;
   state.autoStopOff = false;
   $('step-log').textContent = 'Нажми «1 пачка», чтобы увидеть шаг эволюции подробно.';
+  state.setup = readSetup();
+  CLASSICS = makeClassics(state.setup);
+  REF_ANALYSIS = analyzeFan(REFERENCE, state.setup);
+  state.imported = state.imported && { ...state.imported, ...evaluateFan(state.imported.genome, state.setup) };
+  if (silentMode()) {
+    // listen to what the goal is about: the night speed against its background
+    setAmbient(state.setup.ambient);
+    setSpeed(3);
+  }
   const evo = new Evolution(readConfig());
   const genomes = evo.firstGenomes();
   const results = await evaluator.all(genomes, (done, total) => {
@@ -183,8 +202,9 @@ function show(fan) {
   state.shown = fan;
   state.pendingShown = null;
   state.lastShownAt = performance.now();
-  const a = analyzeFan(fan.genome);
+  const a = analyzeFan(fan.genome, state.setup);
   a.genome = fan.genome;
+  if (a.blows && !a.night) a.night = nightSpeed(a, state.setup.ambient);
   state.analysis = a;
   updateCondition();
   if (state.view3d) state.view3d.setFan(rotorOf(), a);
@@ -208,13 +228,23 @@ const rotorOf = () => (state.analysis && state.analysis.rotor) || state.shown.ge
 // The same for a pool member (its trim comes back from the worker).
 const builtRotor = (d) => (d.trim ? trimFan(d.genome, d.trim) : d.genome);
 
-const speedScale = () => FAN.settings[state.speed] / FAN.rpm;
+// The turn rate on screen as a share of FAN.rpm: a speed setting, or the night speed of the shown fan.
+const night = () => state.speed === 3;
+const refNight = () => referenceNight(state.setup.ambient);
+const speedScale = () => (night() ? (state.analysis && state.analysis.night ? state.analysis.night.rpm : 0) : FAN.settings[state.speed]) / FAN.rpm;
 
-// The noise of the shown fan and of the reference at the speed setting.
+// The noise of the shown fan and of the reference at the speed setting (at the night speed - each at its own,
+// with the aerodynamics solved there).
 function updateCondition() {
+  const a = state.analysis;
+  if (night()) {
+    state.refCond = refNight().cond;
+    state.cond = a && a.blows ? a.night.cond : null;
+    return;
+  }
   const s = speedScale();
   state.refCond = noiseAt(REF_ANALYSIS.prep, s);
-  state.cond = state.analysis && state.analysis.blows ? noiseAt(state.analysis.prep, s) : null;
+  state.cond = a && a.blows ? noiseAt(a.prep, s) : null;
 }
 
 function updateSound() {
@@ -250,7 +280,7 @@ function drawCharts() {
   [ctx, w, h] = c('harmonics-canvas');
   drawHarmonics(ctx, state.shown.genome, state.cond, w, h);
   [ctx, w, h] = c('speed-canvas');
-  drawNoiseSpeed(ctx, a, REF_ANALYSIS, state.cond, w, h);
+  drawNoiseSpeed(ctx, a, REF_ANALYSIS, state.cond, w, h, a.night.rpm);
   [ctx, w, h] = c('stall-canvas');
   drawStall(ctx, a, w, h);
 }
@@ -261,11 +291,12 @@ const toneText = (c) => (c.worst ? `${c.worst.f.toFixed(0)} Гц, слышимо
 function drawLive() {
   const c = state.cond, a = state.analysis;
   if (!c) { $('live').innerHTML = 'Этот вентилятор не дует.'; return; }
-  const s = c.s, rpm = FAN.settings[state.speed];
+  const s = c.n / a.n, rpm = c.n * 60;   // the turn rate against the middle setting: push ∝ s², breeze ∝ s, power ∝ s³
   const tip = 2 * Math.PI * c.n * fanDiameter(a.genome) / 2;
   const breeze = a.breeze.at * s;
   const ref = state.refCond;
-  $('live').innerHTML = `скорость <b>${state.speed + 1}</b>: ${rpm} об/мин · конец лопасти ${tip.toFixed(1)} м/с · ` +
+  $('live').innerHTML = (night() ? `<b>🌙 ночная скорость</b> (не слышно на фоне «${AMBIENTS[state.setup.ambient].name}»): ${rpm.toFixed(0)} об/мин` :
+    `скорость <b>${state.speed + 1}</b>: ${rpm.toFixed(0)} об/мин`) + ` · конец лопасти ${tip.toFixed(1)} м/с · ` +
     `упор ${(a.thrust * s * s).toFixed(2)} Н, ${(a.flow * s * 60).toFixed(0)} м³/мин, ветер в 2 м ≈ ${breeze.toFixed(1)} м/с · ` +
     `${(a.power * s * s * s).toFixed(1)} Вт · у кровати <b class="${c.rating < ref.rating ? 'good' : 'bad'}">L_R ${c.rating.toFixed(1)} дБА</b> ` +
     `(дБ(A) ${c.la.toFixed(1)} + тон ${c.kt.toFixed(1)}; эталон ${ref.rating.toFixed(1)}) · самый слышный тон: ${toneText(c)}` +
@@ -332,7 +363,14 @@ function drawScoreInfo() {
   const n = a.noise, rn = r.noise;
   const row = (name, mine, ref, note) => `<tr><td>${name}</td><td><b>${mine}</b></td><td>${ref}</td><td>${note}</td></tr>`;
   const mpa = (x) => `${(x / 1e6).toFixed(1)} МПа`;
+  const rnight = refNight(), bg = AMBIENTS[state.setup.ambient].name;
   html += '<table class="score-table"><tr><th>Часть</th><th>Этот</th><th>Эталон</th><th>Что значит</th></tr>' +
+    (silentMode() ? row('Неслышимый ветер', `${a.night.breeze.toFixed(2)} м/с`, `${rnight.breeze.toFixed(2)} м/с`,
+      `ветер в 2 м на ночной скорости — самой быстрой, на которой вентилятор не слышно ` +
+      (state.setup.ambient === 'none' ? 'в полной тишине (ниже порога слуха)' : `на фоне «${bg}»`) +
+      `: ни в одной полосе слуха не громче фона, тоны не торчат`) +
+      row('Ночная скорость', `${a.night.rpm.toFixed(0)} об/мин`, `${rnight.rpm.toFixed(0)} об/мин`,
+        `упор ${(a.thrust * (a.night.rpm / FAN.rpm) ** 2).toFixed(2)} Н; аэродинамика пересчитана на этих оборотах`) : '') +
     row('Оценочный уровень L_R', `${n.rating.toFixed(1)} дБА`, `${rn.rating.toFixed(1)} дБА`,
       `в ${FAN.listener} м, на скорости 2 (${FAN.rpm} об/мин) = дБ(A) + штраф за тон`) +
     row('· дБ(A)', `${n.la.toFixed(1)}`, `${rn.la.toFixed(1)}`,
@@ -349,11 +387,15 @@ function drawScoreInfo() {
       `пресс-форма не заполняет стенку тоньше ${FAN.plastic.minThickness * 1000} мм`) +
     row('Перекрытие', a.overlap.toFixed(2), r.overlap.toFixed(2),
       `ширина лопасти (вид спереди) / самый узкий промежуток ${(a.gap * 180 / Math.PI).toFixed(0)}°; больше 1 — не отлить`) +
+    row('Вибрация при повороте головы', `${(a.wobble * 100).toFixed(0)}%`, `${(r.wobble * 100).toFixed(0)}%`,
+      `пульсация гироскопического момента: инерция ротора неодинакова в его плоскости (2 лопасти — 100%, ровные 3 и больше — 0); ` +
+      `допуск ${WOBBLE_TOLERANCE * 100}%, сверх него штраф ${WOBBLE_PENALTY} за каждое удвоение`) +
     '</table>' +
-    `<div class="formula">оценка = 100 + ${NOISE_WEIGHT} × ${a.quieter.toFixed(1)} дБА тише ${a.powerPoints >= 0 ? '+' : '−'} ${Math.abs(a.powerPoints).toFixed(1)} за мощность` +
+    `<div class="formula">оценка = 100 + ${silentMode() ? `${SILENT_WEIGHT} × log2(${a.night.breeze.toFixed(2)} / ${rnight.breeze.toFixed(2)})` :
+      `${NOISE_WEIGHT} × ${a.quieter.toFixed(1)} дБА тише`} ${a.powerPoints >= 0 ? '+' : '−'} ${Math.abs(a.powerPoints).toFixed(1)} за мощность` +
     (a.penalty > 0 ? ` − штраф ${a.penalty.toFixed(1)}` : '') + ` = <b>${a.raw.toFixed(2)}</b>` +
     (Math.abs(a.raw - d.score) > 0.01 ? ` → ${d.score.toFixed(2)} (ниже ${SCORE_FLOOR} оценка плавно прижимается к нулю: 100 / (20 − x))` : '') + '</div>' +
-    (a.penalty > 0 ? `<p class="note">Штраф: ${[['слабый ветер', a.weak], ['мотор', a.motor], ['прочность и литьё', a.strength], ['перекрытие', a.overlapPenalty]]
+    (a.penalty > 0 ? `<p class="note">Штраф: ${[['слабый ветер', a.weak], ['мотор', a.motor], ['прочность и литьё', a.strength], ['перекрытие', a.overlapPenalty], ['вибрация', a.wobblePenalty]]
       .filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', ')}.</p>` : '');
   $('score-info').innerHTML = html;
 }
@@ -391,7 +433,8 @@ function drawSpecies() {
     const mark = r.key === state.pinnedSpecies && $('view-source').value === 'species' ? ' ◀' : '';
     html += `<tr class="clickable" data-key="${r.key}"><td><canvas width="56" height="56" class="mini"></canvas></td>` +
       `<td>${speciesName(r.key)}</td><td>${r.size}</td>` + (on ? `<td>${r.quota.toFixed(0)}</td>` : '') +
-      `<td>${r.best.score.toFixed(1)} · ${CLASS_NAMES[r.best.cls]}${r.best.rating !== undefined ? ` · ${r.best.rating.toFixed(1)} дБА` : ''}${mark}</td></tr>`;
+      `<td>${r.best.score.toFixed(1)} · ${CLASS_NAMES[r.best.cls]}${r.best.quietBreeze !== undefined ? ` · неслышно ${r.best.quietBreeze.toFixed(2)} м/с` :
+        r.best.rating !== undefined ? ` · ${r.best.rating.toFixed(1)} дБА` : ''}${mark}</td></tr>`;
   }
   $('species-info').innerHTML = html + '</table>';
   $('species-info').querySelectorAll('canvas.mini').forEach((cv, i) => drawFan(cv.getContext('2d'), builtRotor(rows[i].best), cv.width, cv.height, true));
@@ -399,7 +442,8 @@ function drawSpecies() {
 
 function describeStep(s) {
   const line = (label, c) => `${label} #${c.id}: ${CLASS_NAMES[c.cls]}, ${c.species} лоп., оценка ${c.score.toFixed(2)}` +
-    (c.rating !== undefined ? ` (L_R ${c.rating.toFixed(1)} дБА, упор ${c.thrust.toFixed(2)} Н, ${c.power.toFixed(1)} Вт)` : '');
+    (c.rating !== undefined ? ` (L_R ${c.rating.toFixed(1)} дБА, ${c.power.toFixed(1)} Вт` +
+      (c.quietBreeze !== undefined ? `, неслышно ${c.quietBreeze.toFixed(2)} м/с на ${c.nightRpm.toFixed(0)} об/мин` : '') + ')' : '');
   const head = s.parentSpecies !== null
     ? [`Родителей выбрали в виде «${speciesName(s.parentSpecies)}» (вид берётся с вероятностью по квоте),`,
       `погибший — из вида «${speciesName(s.deathSpecies)}» (он сильнее всех превысил квоту).`, '']
@@ -422,16 +466,19 @@ $('btn-step').onclick = async () => {
 $('btn-reset').onclick = () => reset();
 $('btn-new-seed').onclick = () => { $('cfg-seed').value = 1 + Math.floor(Math.random() * 999999); reset(); };
 $('view-source').onchange = () => offerShown(pickShown(), true);
-document.querySelectorAll('.speeds button[data-speed]').forEach((b) => {
-  b.onclick = () => {
-    state.speed = Number(b.dataset.speed);
-    document.querySelectorAll('.speeds button[data-speed]').forEach((o) => o.classList.toggle('active', o === b));
-    updateCondition();
-    drawCharts();
-    drawLive();
-    updateSound();
-  };
-});
+function setSpeed(index) {
+  state.speed = index;
+  document.querySelectorAll('.speeds button[data-speed]').forEach((o) => o.classList.toggle('active', Number(o.dataset.speed) === index));
+  if (!state.analysis) return;
+  updateCondition();
+  drawCharts();
+  drawLive();
+  updateSound();
+}
+document.querySelectorAll('.speeds button[data-speed]').forEach((b) => { b.onclick = () => setSpeed(Number(b.dataset.speed)); });
+$('cfg-goal').onchange = () => { $('silent-settings').hidden = $('cfg-goal').value !== 'silent'; };
+$('cfg-ambient').innerHTML = Object.entries(AMBIENTS)
+  .map(([k, a]) => `<option value="${k}"${k === 'night' ? ' selected' : ''}>${k === 'none' ? 'тишина (порог слуха)' : a.name}</option>`).join('');
 $('btn-sound').onclick = () => {
   const on = FanSound.toggle();
   $('btn-sound').classList.toggle('active', on);
@@ -448,12 +495,15 @@ document.querySelectorAll('#listen button').forEach((b) => {
 $('ambient').innerHTML = Object.entries(AMBIENTS).map(([k, a]) => `<option value="${k}">${a.name}</option>`).join('');
 $('ambient').value = state.ambient;
 FanSound.setAmbient(state.ambient);
-$('ambient').onchange = () => {
-  state.ambient = $('ambient').value;
-  FanSound.setAmbient(state.ambient);
+function setAmbient(key) {
+  state.ambient = key;
+  $('ambient').value = key;
+  FanSound.setAmbient(key);
+  if (!state.analysis) return;
   drawCharts();
   drawLive();
-};
+}
+$('ambient').onchange = () => setAmbient($('ambient').value);
 $('species-info').onclick = (e) => {
   const tr = e.target.closest('tr[data-key]');
   if (!tr) return;
@@ -476,7 +526,9 @@ $('btn-export').onclick = () => {
       'The pitch genes give the shape: the whole pitch is multiplied by pitchTrim for the wanted breeze.',
     score: d.score,
     referenceScore: REFERENCE_SCORE,
+    goal: state.setup,
     ratingLevel: d.rating,
+    inaudibleBreeze: d.quietBreeze,
     pitchTrim: d.trim,
     angles: bladeAngles(d.genome).angles.map((t) => +(t * 180 / Math.PI).toFixed(2)),
     genome: d.genome,
@@ -513,7 +565,7 @@ $('file-import').onchange = async (e) => {
       sweep: nums(g.sweep, SWEEP_POINTS, 'sweep', RANGES.sweep),
       spacing,
     };
-    state.imported = { id: 'file', genome, ...evaluateFan(genome), parents: null };
+    state.imported = { id: 'file', genome, ...evaluateFan(genome, state.setup), parents: null };
     $('view-source').querySelector('option[value=imported]').disabled = false;
     $('view-source').value = 'imported';
     offerShown(state.imported, true);

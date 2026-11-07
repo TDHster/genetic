@@ -150,10 +150,13 @@ function pitchTrim(g) {
   return k;
 }
 
-// The air: mean speed through the disc (m/s) and how fast the breeze reaches the person (a free round jet:
-// the core keeps the far-wake speed 2·w for about 6 diameters, then slows as 1 / distance).
+// The air: mean speed through the disc (m/s) and how fast the breeze reaches the person. A free round jet keeps its
+// momentum flux - the push T: past its core (~6 jet diameters) the speed on its axis is u = 6.2·√(4T / πρ) / distance,
+// whatever the diameter of the fan; closer, no more than the core speed 2·w. So the breeze at 2 m is set by the push:
+// a small fan with the same push gives a narrower jet, not a stronger breeze.
 function breezeAt(op, D, distance) {
   const area = Math.PI * (D / 2) ** 2 * (1 - FAN.hubRatio ** 2);
-  const disc = op.flow / area, jet = 2 * disc, d0 = D / Math.SQRT2;
-  return { disc, at: distance < 6.2 * d0 ? jet : jet * 6.2 * d0 / distance };
+  const disc = op.flow / area;
+  const far = 6.2 * Math.sqrt(4 * Math.max(0, op.T) / (Math.PI * AIR.rho)) / distance;
+  return { disc, at: Math.min(2 * disc, far) };
 }

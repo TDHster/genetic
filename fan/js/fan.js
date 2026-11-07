@@ -134,6 +134,17 @@ function smallestGap(angles) {
   return gap;
 }
 
+// WOBBLE. A pedestal fan turns its head from side to side; the spinning rotor then feels a gyroscopic torque.
+// It is steady when the rotor has the same inertia in every direction of its plane: Σ e^(2iθ_j) = 0 (the balance sum
+// with doubled angles). Otherwise the torque pulses at twice the turn rate and the head shakes. Share of the pulsing
+// part: |Σ e^(2iθ_j)| / Z - 1 for 2 blades (a stick has no inertia along itself), 0 for 3 and more evenly spaced,
+// ~0.14 for 4 blades as a slanted cross 98°/82°.
+function wobbleOf(angles) {
+  let re = 0, im = 0;
+  for (const t of angles) { re += Math.cos(2 * t); im += Math.sin(2 * t); }
+  return Math.hypot(re, im) / angles.length;
+}
+
 function copyFan(g) {
   return {
     blades: g.blades, diameter: g.diameter, pitch: g.pitch.slice(), chord: g.chord.slice(),

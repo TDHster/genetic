@@ -163,7 +163,8 @@ const FREQ_GRID = (() => {
 // The noise at the speed scale s (turn rate / FAN.rpm: the speed settings): every speed and force scales with it,
 // tones as s³ in pressure (60·lg s), the trailing edge and stall as s^2.5 (50·lg s), the leading edge as s^1.5 (30·lg s),
 // frequencies as s.
-function noiseAt(prep, s) {
+// The sources only (no psychoacoustics): tones { h, f, level, even, sum } and the broadband levels with their peaks.
+function sourcesAt(prep, s) {
   const n = prep.n * s, r = FAN.listener, c0 = AIR.sound;
   const level = (F, f) => pressureLevel(F * s * s / Math.SQRT2 * f / (2 * c0 * r));
   const tones = [];
@@ -179,6 +180,11 @@ function noiseAt(prep, s) {
     s, n, tones, te: bb(prep.te), teFreq: prep.teFreq * s, stall: bb(prep.stall), stallFreq: prep.stallFreq * s,
     le: 10 * Math.log10(prep.le * s ** 3 / (r * r)) + NOISE.inflow, leFreq: prep.leFreq * s,
   };
+  return cond;
+}
+
+function noiseAt(prep, s) {
+  const cond = sourcesAt(prep, s), tones = cond.tones;
   // A-weighted levels: the tones one by one, the broadband integrated over the frequency grid
   cond.laTones = powerSum(tones.map((t) => t.level + aWeight(t.f)));
   let bbA = 0, bbLin = 0, stallA = 0;

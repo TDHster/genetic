@@ -153,8 +153,9 @@ function drawHarmonics(ctx, g, cond, w, h) {
     f.pad.l + f.pw - 4, f.pad.t + 12);
 }
 
-// The rating level and the plain dB(A) over the turn rate, for this fan and the reference; the speed settings marked.
-function drawNoiseSpeed(ctx, a, ref, cond, w, h) {
+// The rating level and the plain dB(A) over the turn rate, for this fan and the reference; the speed settings and the
+// night speed (inaudible against the background of the goal) marked.
+function drawNoiseSpeed(ctx, a, ref, cond, w, h, nightRpm) {
   const rpms = [];
   for (let r = 500; r <= 1600; r += 25) rpms.push(r);
   const line = (an, key) => rpms.map((r) => noiseAt(an.prep, r / FAN.rpm)[key]);
@@ -168,6 +169,15 @@ function drawNoiseSpeed(ctx, a, ref, cond, w, h) {
     ctx.textAlign = 'center';
     ctx.fillText(String(i + 1), f.X(r), f.pad.t + 12);
   });
+  if (nightRpm >= 500) {
+    polyline(ctx, [[f.X(nightRpm), f.pad.t + 16], [f.X(nightRpm), f.pad.t + f.ph]], COLORS.ambient, 1, [2, 3]);
+    ctx.fillStyle = COLORS.ambient;
+    ctx.fillText('🌙', f.X(nightRpm), f.pad.t + 12);
+  } else {
+    ctx.fillStyle = COLORS.ambient;
+    ctx.textAlign = 'left';
+    ctx.fillText(`🌙 ${nightRpm.toFixed(0)} об/мин — левее графика`, f.pad.l + 6, f.pad.t + 12);
+  }
   polyline(ctx, rpms.map((r, i) => [f.X(r), f.Y(theirs[i])]), COLORS.reference, 1.5, [6, 4]);
   polyline(ctx, rpms.map((r, i) => [f.X(r), f.Y(mineA[i])]), COLORS.fan, 1);
   polyline(ctx, rpms.map((r, i) => [f.X(r), f.Y(mine[i])]), COLORS.fan, 2.2);

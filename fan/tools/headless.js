@@ -1,26 +1,30 @@
 // Run the evolution of fan blades without a browser.
-// Usage: node tools/headless.js [generations] [populationSize] [seed] [species|plain]
-//        node tools/headless.js check   - the classic fans in detail and the best of 100 random ones
+// Usage: node tools/headless.js [generations] [populationSize] [seed] [species|plain] [loud|silent] [ambient]
+//        node tools/headless.js check [loud|silent] [ambient]   - the classic fans in detail and the best of 100 random ones
+//        ambient: none | night | crickets | rain | city (for the goal "silent", default night)
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
 // The page scripts run in this very context (as classic <script>s share one global scope).
-const FILES = ['rng.js', 'room.js', 'fan.js', 'aero.js', 'acoustics.js', 'fitness.js', 'evolution.js'];
+const FILES = ['rng.js', 'room.js', 'fan.js', 'aero.js', 'acoustics.js', 'ambient.js', 'fitness.js', 'evolution.js'];
 for (const file of FILES) {
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), { filename: file });
 }
 const run = (code) => vm.runInThisContext(code);
-const evaluate = run('evaluateFan');
+const goalArgs = process.argv[2] === 'check' ? process.argv.slice(3) : process.argv.slice(6);
+const setup = { goal: goalArgs[0] === 'silent' ? 'silent' : 'loud', ambient: goalArgs[1] || 'night' };
+const evaluate = (g) => run('evaluateFan')(g, setup);
 
 const describe = (d) => d.rating === undefined ? `${d.score.toFixed(2)} (${run('CLASS_NAMES')[d.cls]})` :
   `${d.score.toFixed(2)} (${run('speciesName')(d.species)}, L_R ${d.rating.toFixed(1)} дБА = L_A ${d.la.toFixed(1)} + K_T ${d.kt.toFixed(1)}; ` +
-  `упор ${d.thrust.toFixed(2)} Н, ${d.power.toFixed(1)} Вт, срыв ${(100 * d.stalled).toFixed(0)}%, ${run('CLASS_NAMES')[d.cls]})`;
+  `упор ${d.thrust.toFixed(2)} Н, ${d.power.toFixed(1)} Вт, срыв ${(100 * d.stalled).toFixed(0)}%, ${run('CLASS_NAMES')[d.cls]}` +
+  (d.quietBreeze !== undefined ? `; неслышно: ${d.nightRpm.toFixed(0)} об/мин, ветер ${d.quietBreeze.toFixed(2)} м/с` : '') + ')';
 
 if (process.argv[2] === 'check') {
   for (const name of ['REFERENCE', 'OLD_METAL', 'FIVE_SICKLE', 'FIVE_UNEVEN']) {
     const g = run(name);
-    const a = run('analyzeFan')(g);
+    const a = run('analyzeFan')(g, setup);
     console.log(`${name}: ${describe(evaluate(g))}`);
     if (!a.blows) continue;
     const c = a.noise;
